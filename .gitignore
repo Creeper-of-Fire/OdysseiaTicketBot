@@ -1,0 +1,7 @@
+.venv/
+.idea/
+/data/user_data.json
+__pycache__/
+.env
+deploy.env
+data/*.db
