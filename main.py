@@ -11,6 +11,7 @@ import config
 import config_data
 from core.CoreCog import CoreCog
 from core.embed_link.embed_manager import EmbedLinkManager
+from pray.WishSystemCog import WishSystemCog
 
 # ===================================================================
 # 日志设置
@@ -129,6 +130,7 @@ class CogManager:
         # 定义一个 cog 名称到其类定义的映射，方便动态加载
         self.cog_map: Dict[str, Type[commands.Cog] | List[Type[commands.Cog]]] = {
             "core": CoreCog,
+            "wish": WishSystemCog,
         }
 
     async def load_all_enabled(self):
