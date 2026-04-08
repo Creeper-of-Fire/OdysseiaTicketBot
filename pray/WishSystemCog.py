@@ -4,11 +4,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import config
 import config_data
 from config_data import GuildWishConfig
 from utility.feature_cog import FeatureCog
 from .adapters import AsyncJsonWishRepository, DiscordWishAdapter
-from .pray_core.engine import WishEngine
+from .pray_core.engine import WishEngine, StateTransitionError
 from .pray_core.manager import WishDataManager
 from .pray_core.models import UserContext, UserRole, WishCategory
 from .ui.embeds import WishEmbed, WishUIFactory
@@ -64,75 +65,150 @@ class WishSystemCog(FeatureCog):
 
         return UserContext(user_id=str(interaction.user.id), role=role)
 
+    @staticmethod
+    async def _execute_engine_call(interaction: discord.Interaction, coro):
+        """统一执行引擎操作并处理业务异常"""
+        try:
+            return await coro
+        except (PermissionError, StateTransitionError, ValueError) as e:
+            # 引擎抛出的业务错误直接反馈给用户
+            msg = f"❌ 操作失败: {str(e)}"
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            return None
+
     # ================= 核心交互入口 =================
 
-    @app_commands.command(name="wish", description="✨ 提出一个新的愿望")
-    async def cmd_wish(self, interaction: discord.Interaction):
-        user_ctx = self._get_user_context(interaction)
-        if user_ctx.role < UserRole.BUILDER:
-            return await interaction.response.send_message("❌ 权限不足：您至少需要是【社区建设者】才能许愿。", ephemeral=True)
+    pray_group = app_commands.Group(
+        name=f"{config.COMMAND_GROUP_NAME}丨许愿", description="许愿池相关指令",
+        guild_ids=[gid for gid in config.GUILD_IDS],
+        default_permissions=discord.Permissions(read_messages=True),
+    )
 
-        # 弹出创建模态框
+    @pray_group.command(name="许愿", description="✨ 提出一个新的愿望")
+    async def cmd_wish(self, interaction: discord.Interaction):
+        """发起愿望：只负责弹出输入框，不负责逻辑校验"""
+        user_ctx = self._get_user_context(interaction)
+        engine = self._get_engine(interaction.guild_id)
+
+        # 定义发起愿望的 Modal
         class CreateWishModal(discord.ui.Modal, title="许下你的愿望"):
             title_input = discord.ui.TextInput(label="标题 (一句话描述)", max_length=100)
             content_input = discord.ui.TextInput(label="详细内容", style=discord.TextStyle.paragraph)
 
-            def __init__(self, cog: WishSystemCog):
+            def __init__(self, outer_cog: 'WishSystemCog', outer_engine, outer_ctx):
                 super().__init__()
-                self.cog = cog
+                self.cog = outer_cog
+                self.engine = outer_engine
+                self.ctx = outer_ctx
 
-            async def on_submit(self, modal_interaction: discord.Interaction):
-                engine = self.cog._get_engine(modal_interaction.guild_id)
-                ctx = self.cog._get_user_context(modal_interaction)
+            async def on_submit(self, m_interaction: discord.Interaction):
+                try:
+                    # 1. 核心逻辑交还给 Engine
+                    # 引擎会根据 UserRole 决定它是 ActiveWish 还是进入 DiscussionWish (ADMIN_HELP)
+                    # 引擎会检查 PermissionError
+                    wish = await self.engine.create_wish(
+                        self.ctx,
+                        WishCategory.COMMUNITY,  # 默认分类，可根据需求增加 SelectMenu 选择分类
+                        self.title_input.value,
+                        self.content_input.value
+                    )
 
-                # 调用引擎异步创建
-                wish = await engine.create_wish(
-                    ctx, WishCategory.COMMUNITY, self.title_input.value, self.content_input.value
-                )
+                    # 2. 统一使用工厂生成 UI
+                    # 如果 wish 是 DiscussionWish (例如管理组求助)，生成的 View 自动就会带上“认领”按钮
+                    # 如果 wish 是 ActiveWish，自动带上“支持”按钮
+                    embed = WishEmbed(wish)
+                    view = WishUIFactory.build_view(wish, self.ctx)
 
-                # 渲染卡片和初始UI
-                embed = WishEmbed(wish)
-                view = WishUIFactory.build_view(wish, ctx)
+                    # 3. 发送消息
+                    guild_config = self.cog._configs.get(m_interaction.guild_id)
+                    target_channel = self.cog.bot.get_channel(guild_config.wish_channel_id) if guild_config else m_interaction.channel
 
-                # 发送到指定的频道
-                config = self.cog._configs.get(modal_interaction.guild_id)
-                channel = self.cog.bot.get_channel(config.wish_channel_id) if config else modal_interaction.channel
+                    # 在目标频道发送正式卡片
+                    await target_channel.send(embed=embed, view=view)
+                    # 给用户一个回馈
+                    await m_interaction.response.send_message(f"✅ 愿望发布成功！", ephemeral=True)
 
-                await channel.send(embed=embed, view=view)
-                await modal_interaction.response.send_message(f"✅ 愿望发布成功！ID: `{wish.id}`", ephemeral=True)
+                except PermissionError as e:
+                    await m_interaction.response.send_message(f"❌ 许愿失败: {e}", ephemeral=True)
+                except Exception as e:
+                    self.cog.logger.error(f"创建愿望时发生崩溃: {e}", exc_info=True)
+                    if not m_interaction.response.is_done():
+                        await m_interaction.response.send_message("🚨 系统内部错误", ephemeral=True)
 
-        await interaction.response.send_modal(CreateWishModal(self))
+        # 弹出 Modal
+        await interaction.response.send_modal(CreateWishModal(self, engine, user_ctx))
 
     # ================= 全局组件交互路由 =================
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        """统一接管所有的许愿卡按钮点击事件，支持持久化操作"""
-        if interaction.type != discord.InteractionType.component:
-            return
-
+        """统一分发按钮交互"""
+        if interaction.type != discord.InteractionType.component: return
         custom_id = interaction.data.get("custom_id", "")
-        if not custom_id.startswith("wish:"):
-            return
+        if not custom_id.startswith("wish:"): return
 
-        # 解析路由: wish:action:wish_id
         _, action, wish_id = custom_id.split(":")
-
         engine = self._get_engine(interaction.guild_id)
-        user_ctx = self._get_user_context(interaction)
+        ctx = self._get_user_context(interaction)
 
         try:
+            # 根据 custom_id 路由到不同的处理逻辑
             if action == "support":
-                await self._handle_support(interaction, engine, user_ctx, wish_id)
+                # 引擎会处理：是否是 ActiveWish？是否支持过？
+                new_wish = await engine.support_wish(ctx, wish_id)
+                await interaction.response.edit_message(
+                    embed=WishEmbed(new_wish),
+                    view=WishUIFactory.build_view(new_wish, ctx)
+                )
+
             elif action == "claim":
-                await self._handle_claim_trigger(interaction, engine, user_ctx, wish_id)
+                # 弹出 Modal 收集信息，具体的业务逻辑在 Modal 提交时调用引擎
+                await self._show_claim_modal(interaction, engine, ctx, wish_id)
+
             elif action == "manage":
-                await self._handle_manage_trigger(interaction, engine, user_ctx, wish_id)
+                await self._show_manage_panel(interaction, engine, ctx, wish_id)
+
+        except (StateTransitionError, PermissionError, ValueError) as e:
+            # 所有的业务校验错误统一处理
+            await interaction.response.send_message(f"❌ 操作无法执行: {e}", ephemeral=True)
         except Exception as e:
-            self.logger.error(f"处理交互失败: {e}", exc_info=True)
-            # 这里的异常可能是业务的 StateTransitionError，直接反馈给用户
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"⚠️ 操作失败: {str(e)}", ephemeral=True)
+            self.logger.error(f"未知错误: {e}", exc_info=True)
+
+    async def _show_claim_modal(self, interaction, engine, ctx, wish_id):
+        class ClaimModal(discord.ui.Modal, title="认领愿望"):
+            link = discord.ui.TextInput(label="提案链接", placeholder="https://...")
+
+            async def on_submit(self, itl: discord.Interaction):
+                # 引擎负责检查 DiscussionWish 类型转换
+                new_wish = await engine.claim_wish(ctx, wish_id, self.link.value)
+                # 直接更新原消息
+                await interaction.message.edit(
+                    embed=WishEmbed(new_wish),
+                    view=WishUIFactory.build_view(new_wish, ctx)
+                )
+                await itl.response.send_message("认领成功！", ephemeral=True)
+
+        await interaction.response.send_modal(ClaimModal())
+
+    async def _show_manage_panel(self, interaction, engine, ctx, wish_id):
+        # 管理面板同样根据引擎返回的对象动态生成
+        class ManageView(discord.ui.View):
+            @discord.ui.button(label="撤回愿望", style=discord.ButtonStyle.danger)
+            async def withdraw(self, itl: discord.Interaction, _):
+                new_wish = await engine.withdraw_wish(ctx, wish_id)
+                await interaction.message.edit(embed=WishEmbed(new_wish), view=WishUIFactory.build_view(new_wish, ctx))
+                await itl.response.send_message("已关闭", ephemeral=True)
+
+            @discord.ui.button(label="管理员：结算(通过)", style=discord.ButtonStyle.success)
+            async def resolve_ok(self, itl: discord.Interaction, _):
+                new_wish = await engine.admin_resolve_proposal(ctx, wish_id, True)
+                await interaction.message.edit(embed=WishEmbed(new_wish), view=WishUIFactory.build_view(new_wish, ctx))
+                await itl.response.send_message("结算完成", ephemeral=True)
+
+        await interaction.response.send_message("管理面板", view=ManageView(), ephemeral=True)
 
     # --- 细分处理逻辑 ---
 

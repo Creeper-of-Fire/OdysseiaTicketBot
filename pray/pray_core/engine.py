@@ -1,4 +1,4 @@
-from .models import Wish, UserContext, WishState, UserRole, WishCategory
+from .models import AnyWish, UserContext, UserRole, WishCategory, DiscussionWish, ActiveWish, ClosedWish, FulfilledWish, InProgressWish
 from .ports import IWishExternalAdapter, IWishRepository
 
 
@@ -15,132 +15,152 @@ class WishEngine:
         self.repo = repo
         self.adapter = adapter
 
-    async def _save_and_notify(self, wish: Wish):
+    async def _save_and_notify(self, wish: AnyWish):
         wish.update_timestamp()
         await self.repo.save(wish)
 
     # ================= 发起与基础交互 =================
 
-    async def create_wish(self, user: UserContext, category: WishCategory, title: str, content: str) -> Wish:
+    async def create_wish(self, user: UserContext, category: WishCategory, title: str, content: str) -> AnyWish:
         if user.role < UserRole.BUILDER:
-            raise PermissionError("普通用户没有发起愿望的权限，您至少应当是管理员。")
-
+            raise PermissionError("权限不足。")
         if category == WishCategory.ADMIN_HELP and user.role < UserRole.ADMIN:
-            raise PermissionError("只有管理组才能发布管理组求助。")
+            raise PermissionError("只有管理组能发布该类别的愿望。")
 
-        wish = Wish(author_id=user.user_id, category=category, title=title, content=content)
+        base_data = {
+            "author_id": user.user_id,
+            "category": category,
+            "title": title,
+            "content": content
+        }
 
-        # 状态机：管理求助直接跳过活跃状态
         if category == WishCategory.ADMIN_HELP:
-            wish.state = WishState.IN_DISCUSSION
-            # 触发外部副作用：创建讨论区
+            # 特殊类别直接进入讨论态
+            wish = DiscussionWish(**base_data)
             wish.thread_id = await self.adapter.create_discussion_thread(wish)
         else:
-            wish.state = WishState.ACTIVE
+            # 普通愿望进入活跃态
+            wish = ActiveWish(**base_data)
 
         await self._save_and_notify(wish)
         return wish
 
-    async def support_wish(self, user: UserContext, wish_id: str) -> Wish:
+    async def support_wish(self, user: UserContext, wish_id: str) -> AnyWish:
         wish = await self.repo.get(wish_id)
-        if not wish: raise ValueError("愿望不存在")
-        if wish.state != WishState.ACTIVE:
-            raise StateTransitionError("只有[活跃]状态的愿望可以被支持")
 
-        wish.supporters.add(user.user_id)
+        # 1. 类型约束代替状态枚举校验
+        if not isinstance(wish, ActiveWish):
+            raise StateTransitionError("当前状态无法【支持】。可能是愿望已进入讨论阶段或已关闭。")
 
-        # 状态机：检查是否达到阈值
-        if len(wish.supporters) >= self.SUPPORT_THRESHOLD:
-            wish.state = WishState.IN_DISCUSSION
-            wish.thread_id = await  self.adapter.create_discussion_thread(wish)
-            await  self.adapter.broadcast_event(f"愿望 '{wish.title}' 已获得足够支持，开启讨论！")
+        # 2. 调用领域模型内部的状态机转移
+        new_wish = wish.support(user.user_id, self.SUPPORT_THRESHOLD)
 
-        await   self._save_and_notify(wish)
-        return wish
+        # 3. 如果对象类型发生了变化，说明发生了状态转移，触发外部副作用
+        if isinstance(new_wish, DiscussionWish):
+            new_wish.thread_id = await self.adapter.create_discussion_thread(new_wish)
+            await self.adapter.broadcast_event(f"愿望 '{new_wish.title}' 开启讨论！")
+
+        await self._save_and_notify(new_wish)
+        return new_wish
 
     # ================= 用户流转操作 =================
 
-    async def claim_wish(self, user: UserContext, wish_id: str, proposal_link: str) -> Wish:
-        """用户认领愿望并提交提案链接"""
+    async def claim_wish(self, user: UserContext, wish_id: str, proposal_link: str) -> AnyWish:
         wish = await self.repo.get(wish_id)
-        if wish.state != WishState.IN_DISCUSSION:
-            raise StateTransitionError("只能认领[讨论中]的愿望")
 
-        wish.claimer_id = user.user_id
-        wish.proposal_link = proposal_link
-        wish.state = WishState.IN_PROGRESS
+        if not isinstance(wish, DiscussionWish):
+            raise StateTransitionError("只能认领【讨论中】的愿望。")
 
-        # 锁定讨论区，防止讨论分散到两个地方（可选业务逻辑）
-        if wish.thread_id:
-            await   self.adapter.lock_discussion_thread(wish.thread_id)
+        new_wish = wish.claim(user.user_id, proposal_link)
 
-        await  self._save_and_notify(wish)
-        return wish
+        if new_wish.thread_id:
+            await self.adapter.lock_discussion_thread(new_wish.thread_id)
 
-    async def withdraw_wish(self, user: UserContext, wish_id: str) -> Wish:
-        """建设者撤回自己的愿望"""
-        wish = await  self.repo.get(wish_id)
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def withdraw_wish(self, user: UserContext, wish_id: str) -> AnyWish:
+        wish = await self.repo.get(wish_id)
+        if not wish: raise ValueError("不存在")
+
+        # 权限检查：只有作者或管理员能关闭
         if wish.author_id != user.user_id and user.role < UserRole.ADMIN:
-            raise PermissionError("只能撤回自己的愿望")
-        if wish.state == WishState.CLOSED:
-            raise StateTransitionError("该愿望已被关闭")
+            raise PermissionError("无权操作此愿望。")
 
-        wish.state = WishState.CLOSED
-        wish.close_reason = "作者自行撤回"
+        if isinstance(wish, (ClosedWish, FulfilledWish)):
+            raise StateTransitionError("愿望已是最终状态，无法撤回。")
 
-        if wish.thread_id:
-            await  self.adapter.lock_discussion_thread(wish.thread_id)
+        # 转换为关闭态，保留大部分元数据
+        new_wish = ClosedWish(
+            close_reason="作者自行撤回" if user.user_id == wish.author_id else "由管理员关闭",
+            **wish.model_dump(exclude={"state", "close_reason"})
+        )
 
-        await  self._save_and_notify(wish)
-        return wish
+        if getattr(new_wish, "thread_id", None):
+            await self.adapter.lock_discussion_thread(new_wish.thread_id)
+
+        await self._save_and_notify(new_wish)
+        return new_wish
 
     # ================= 管理员专属高级操作 =================
 
-    async def admin_force_activate(self, user: UserContext, wish_id: str) -> Wish:
-        """管理员无视支持数直接激活讨论"""
+    async def admin_force_activate(self, user: UserContext, wish_id: str) -> AnyWish:
+        """无视支持阈值强行开启讨论"""
         if user.role < UserRole.ADMIN: raise PermissionError()
-        wish = await  self.repo.get(wish_id)
+        wish = await self.repo.get(wish_id)
 
-        if wish.state == WishState.ACTIVE:
-            wish.state = WishState.IN_DISCUSSION
-            wish.thread_id = await self.adapter.create_discussion_thread(wish)
-            await  self._save_and_notify(wish)
-        return wish
+        if not isinstance(wish, ActiveWish):
+            raise StateTransitionError("只有活跃状态的愿望可以被强制激活。")
 
-    async def admin_merge_wishes(self, user: UserContext, source_id: str, target_id: str) -> Wish:
-        """管理员合并愿望"""
+        new_wish = DiscussionWish(**wish.model_dump(exclude={"state"}))
+        new_wish.thread_id = await self.adapter.create_discussion_thread(new_wish)
+
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def admin_merge_wishes(self, user: UserContext, source_id: str, target_id: str) -> AnyWish:
+        """将 source 合并到 target"""
         if user.role < UserRole.ADMIN: raise PermissionError()
         source = await self.repo.get(source_id)
         target = await self.repo.get(target_id)
 
-        # 转移支持者
-        target.supporters.update(source.supporters)
+        if isinstance(source, (ClosedWish, FulfilledWish)):
+            raise StateTransitionError("已关闭的愿望不能再合并。")
+
+        # 逻辑：转移支持者到目标愿望（如果目标支持支持者的话）
+        if hasattr(target, "supporters") and hasattr(source, "supporters"):
+            target.supporters.update(source.supporters)
+            await self.repo.save(target)
 
         # 关闭源愿望
-        source.state = WishState.CLOSED
-        source.close_reason = f"合并至愿望 ID: {target_id}"
-        source.merged_into_id = target_id
-        if source.thread_id:
-            await self.adapter.lock_discussion_thread(source.thread_id)
+        new_source = ClosedWish(
+            close_reason=f"已合并至 ID: {target_id}",
+            merged_into_id=target_id,
+            **source.model_dump(exclude={"state", "close_reason", "merged_into_id"})
+        )
 
-        await  self.repo.save(target)
-        await  self._save_and_notify(source)
-        return source
+        if getattr(new_source, "thread_id", None):
+            await self.adapter.lock_discussion_thread(new_source.thread_id)
 
-    async def admin_resolve_proposal(self, user: UserContext, wish_id: str, is_accepted: bool) -> Wish:
-        """处理提案结果"""
+        await self._save_and_notify(new_source)
+        return new_source
+
+    async def admin_resolve_proposal(self, user: UserContext, wish_id: str, is_accepted: bool) -> AnyWish:
+        """决定提案最终生死"""
         if user.role < UserRole.ADMIN: raise PermissionError()
         wish = await self.repo.get(wish_id)
 
-        if wish.state != WishState.IN_PROGRESS:
-            raise StateTransitionError("只有[实现中]的愿望能处理结果")
+        if not isinstance(wish, InProgressWish):
+            raise StateTransitionError("只有实现中的愿望可以结算。")
 
         if is_accepted:
-            wish.state = WishState.FULFILLED
-            await  self.adapter.broadcast_event(f"🎉 愿望 '{wish.title}' 对应的提案已通过/完成！")
+            new_wish = FulfilledWish(**wish.model_dump(exclude={"state"}))
+            await self.adapter.broadcast_event(f"🎉 愿望 '{wish.title}' 已达成！")
         else:
-            wish.state = WishState.CLOSED
-            wish.close_reason = "对应的提案被否决"
+            new_wish = ClosedWish(
+                close_reason="相关提案未通过审核",
+                **wish.model_dump(exclude={"state", "close_reason"})
+            )
 
-        await self._save_and_notify(wish)
-        return wish
+        await self._save_and_notify(new_wish)
+        return new_wish

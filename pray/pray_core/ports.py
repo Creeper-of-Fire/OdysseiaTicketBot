@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from .models import Wish
+from .models import AnyWish
 
 
 class IWishExternalAdapter(ABC):
@@ -11,7 +11,7 @@ class IWishExternalAdapter(ABC):
     """
 
     @abstractmethod
-    async def create_discussion_thread(self, wish: Wish) -> str:
+    async def create_discussion_thread(self, wish: AnyWish) -> str:
         """创建讨论区，返回 thread_id"""
         pass
 
@@ -43,10 +43,10 @@ class IWishRepository(ABC):
     """
 
     @abstractmethod
-    async def save(self, wish: Wish): pass
+    async def save(self, wish: AnyWish): pass
 
     @abstractmethod
-    async def get(self, wish_id: str) -> Optional[Wish]: pass
+    async def get(self, wish_id: str) -> Optional[AnyWish]: pass
 
     @abstractmethod
-    async def get_all(self) -> List[Wish]: pass
+    async def get_all(self) -> List[AnyWish]: pass
