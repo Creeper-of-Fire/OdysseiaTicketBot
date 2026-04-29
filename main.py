@@ -12,6 +12,8 @@ import config_data
 from core.CoreCog import CoreCog
 from core.embed_link.embed_manager import EmbedLinkManager
 from pray.WishSystemCog import WishSystemCog
+from bottle.BottleSystemCog import BottleSystemCog
+from temp.TempCog import TempCog
 
 # ===================================================================
 # 日志设置
@@ -131,6 +133,8 @@ class CogManager:
         self.cog_map: Dict[str, Type[commands.Cog] | List[Type[commands.Cog]]] = {
             "core": CoreCog,
             "wish": WishSystemCog,
+            "bottle": BottleSystemCog,
+            "temp":TempCog,
         }
 
     async def load_all_enabled(self):

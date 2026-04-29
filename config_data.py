@@ -19,6 +19,17 @@ class GuildWishConfig(BaseModel):
     support_threshold: int = Field(default=5, ge=1)
 
 
+class GuildBottleConfig(BaseModel):
+    """单个服务器的漂流瓶系统配置"""
+    # 角色权限配置
+    admin_role_ids: list[int] = Field(default_factory=list, description="管理员/管理组角色ID列表")
+
+    # 业务参数
+    max_bottles_per_user: int = Field(default=3, ge=1)
+    cooldown_seconds: int = Field(default=3600, ge=60)
+    bottle_lifetime_days: int = Field(default=7, ge=1)
+
+
 class WishSystemConfig(RootModel[Dict[int, GuildWishConfig]]):
     """
     全局配置容器 (根模型)
@@ -31,6 +42,27 @@ class WishSystemConfig(RootModel[Dict[int, GuildWishConfig]]):
         return self.root[guild_id]
 
     def get(self, guild_id: int, default=None) -> Optional[GuildWishConfig]:
+        return self.root.get(guild_id, default)
+
+    def __contains__(self, guild_id: int) -> bool:
+        return guild_id in self.root
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.root)
+
+
+class BottleSystemConfig(RootModel[Dict[int, GuildBottleConfig]]):
+    """
+    漂流瓶系统全局配置容器 (根模型)
+    现在你可以直接通过 bottle_config[guild_id] 访问配置
+    """
+
+    root: Dict[int, GuildBottleConfig]
+
+    def __getitem__(self, guild_id: int) -> GuildBottleConfig:
+        return self.root[guild_id]
+
+    def get(self, guild_id: int, default=None) -> Optional[GuildBottleConfig]:
         return self.root.get(guild_id, default)
 
     def __contains__(self, guild_id: int) -> bool:
@@ -69,3 +101,26 @@ GUILD_CONFIGS = {
 }
 
 config = WishSystemConfig(root=GUILD_CONFIGS)
+
+
+# 漂流瓶系统的服务器配置
+BOTTLE_GUILD_CONFIGS = {
+    # --- 类脑 ---
+    1134557553011998840: GuildBottleConfig(  # 替换成你的第一个服务器ID
+        admin_role_ids=[111, 222],  # 管理员/管理组角色ID列表
+        max_bottles_per_user=3,
+        cooldown_seconds=3600,
+        bottle_lifetime_days=7
+    ),
+
+    # --- 神人研究所 ---
+    1265862009673486408: GuildBottleConfig(  # 替换成你的第二个服务器ID
+        admin_role_ids=[1378704432841101423],  # 管理员/管理组角色ID列表
+        max_bottles_per_user=3,
+        cooldown_seconds=3600,
+        bottle_lifetime_days=7
+    ),
+    # 你可以继续添加更多服务器的配置...
+}
+
+bottle_config = BottleSystemConfig(root=BOTTLE_GUILD_CONFIGS)
