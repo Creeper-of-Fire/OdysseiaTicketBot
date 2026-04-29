@@ -21,7 +21,6 @@ class FeatureCog(commands.Cog, ABC, metaclass=CogABCMeta):
     功能模块Cog的基类。
 
     自动处理 bot 和 logger 的初始化，并提供向 CoreCog 注册的标准流程。
-    所有继承此基类的 Cog 都必须实现 `update_safe_roles_cache` 方法。
     """
 
     def __init__(self, bot: 'TicketBot'):

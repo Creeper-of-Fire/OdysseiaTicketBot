@@ -4,7 +4,7 @@ from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 
 from config_data import GuildWishConfig
-from pray.pray_core.models import Wish
+from pray.pray_core.models import AnyWish
 from pray.pray_core.ports import IWishRepository, IWishExternalAdapter
 from utility.base_data_manager import AsyncGuildDataManager
 
@@ -16,17 +16,17 @@ class AsyncJsonWishRepository(IWishRepository):
         self.manager = manager
         self.guild_id = guild_id
 
-    async def save(self, wish: Wish):
+    async def save(self, wish: AnyWish):
         guild_data = self.manager.ensure_guild(self.guild_id)
         guild_data.wishes[wish.id] = wish
         # 触发异步保存
         await self.manager.save_data()
 
-    async def get(self, wish_id: str) -> Optional[Wish]:
+    async def get(self, wish_id: str) -> Optional[AnyWish]:
         guild_data = self.manager.ensure_guild(self.guild_id)
         return guild_data.wishes.get(wish_id)
 
-    async def get_all(self) -> List[Wish]:
+    async def get_all(self) -> List[AnyWish]:
         guild_data = self.manager.ensure_guild(self.guild_id)
         return list(guild_data.wishes.values())
 
@@ -38,7 +38,7 @@ class DiscordWishAdapter(IWishExternalAdapter):
         self.bot = bot
         self.config = config
 
-    async def create_discussion_thread(self, wish: Wish) -> str:
+    async def create_discussion_thread(self, wish: AnyWish) -> str:
         channel = self.bot.get_channel(self.config.discussion_parent_id)
         if not channel or not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
             return ""

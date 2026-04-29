@@ -12,7 +12,7 @@ from rich.table import Table
 from pray.pray_core.engine import WishEngine
 from pray.pray_core.manager import WishDataManager, GuildWishData
 # 导入你提供的基础组件
-from pray.pray_core.models import Wish, WishState, WishCategory, UserRole, UserContext
+from pray.pray_core.models import AnyWish, WishCategory, UserRole, UserContext
 from pray.pray_core.ports import IWishExternalAdapter, IWishRepository
 
 console = Console()
@@ -30,13 +30,13 @@ class WishRepoAdapter(IWishRepository):
         # 确保该服务器的数据对象存在
         return self.manager.ensure_guild(self.guild_id)
 
-    def get(self, wish_id: str) -> Optional[Wish]:
+    def get(self, wish_id: str) -> Optional[AnyWish]:
         return self._get_guild_data().wishes.get(wish_id)
 
-    def get_all(self) -> list[Wish]:
+    def get_all(self) -> list[AnyWish]:
         return list(self._get_guild_data().wishes.values())
 
-    def save(self, wish: Wish):
+    def save(self, wish: AnyWish):
         # 将愿望存入该服务器的字典中
         self._get_guild_data().wishes[wish.id] = wish
         # 触发底层 DataManager 的异步节流保存任务
@@ -61,7 +61,7 @@ class SimpleAdapter(IWishExternalAdapter):
         self.logs.append(f"[dim][{t}][/] {msg}")
         if len(self.logs) > 8: self.logs.pop(0)
 
-    def create_discussion_thread(self, wish: Wish):
+    def create_discussion_thread(self, wish: AnyWish):
         self._add_log(f"🧵 [yellow]Thread:[/] 为 '{wish.title}' 开启讨论")
         return f"thr_{wish.id}"
 
@@ -79,7 +79,7 @@ class SimpleAdapter(IWishExternalAdapter):
 
 
 # --- UI 渲染逻辑 ---
-def draw_ui(wishes: list[Wish], logs: list[str]):
+def draw_ui(wishes: list[AnyWish], logs: list[str]):
     """绘制整个 UI 布局"""
     # 1. 愿望表格
     table = Table(box=box.ROUNDED, expand=True, show_header=True)

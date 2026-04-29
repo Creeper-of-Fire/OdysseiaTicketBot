@@ -25,12 +25,6 @@ class WishSystemCog(FeatureCog):
         # 这里为了演示用一个字典模拟多服务器配置
         self._configs: dict[int, GuildWishConfig] = config_data.config
 
-    async def update_safe_roles_cache(self):
-        """实现抽象基类的强制要求"""
-        self.logger.info("[WishSystem] 更新安全身份组缓存...")
-        # 您的实现逻辑：比如从 CoreCog 获取最新的管理员列表更新到自己的 config 中
-        pass
-
     # ================= 辅助方法 =================
 
     def _get_engine(self, guild_id: int) -> WishEngine:
