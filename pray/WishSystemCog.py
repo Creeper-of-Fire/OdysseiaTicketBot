@@ -111,20 +111,20 @@ class WishSystemCog(FeatureCog):
         default_permissions=discord.Permissions(read_messages=True),
     )
 
-    @pray_group.command(name=”许愿”, description=”✨ 提出一个新的愿望”)
+    @pray_group.command(name="许愿", description="✨ 提出一个新的愿望")
     async def cmd_wish(self, interaction: discord.Interaction):
-        “””发起愿望：先选择分类，再填写内容”””
+        """发起愿望：先选择分类，再填写内容"""
         user_ctx = self._get_user_context(interaction)
         engine = self._get_engine(interaction.guild_id)
 
         # 构建分类选项（不包括 ADMIN_HELP，那是引擎自动判定的）
         category_options = [
             discord.SelectOption(label=WishCategory.BOT_FEATURE.value, value=WishCategory.BOT_FEATURE.value,
-                                 emoji=”🤖”),
+                                 emoji="🤖"),
             discord.SelectOption(label=WishCategory.COMMUNITY.value, value=WishCategory.COMMUNITY.value,
-                                 emoji=”🏘️”),
+                                 emoji="🏘️"),
             discord.SelectOption(label=WishCategory.SYSTEM.value, value=WishCategory.SYSTEM.value,
-                                 emoji=”⚙️”),
+                                 emoji="⚙️"),
         ]
 
         class CategorySelectView(discord.ui.View):
@@ -134,14 +134,14 @@ class WishSystemCog(FeatureCog):
                 self.engine = outer_engine
                 self.ctx = outer_ctx
 
-            @discord.ui.select(placeholder=”请选择愿望分类...”, options=category_options)
+            @discord.ui.select(placeholder="请选择愿望分类...", options=category_options)
             async def category_select(select_self, sel_interaction: discord.Interaction, select: discord.ui.Select):
                 selected_category = WishCategory(select.values[0])
                 cog = select_self.cog
 
-                class CreateWishModal(discord.ui.Modal, title=f”许下你的愿望 — {selected_category.value}”):
-                    title_input = discord.ui.TextInput(label=”标题 (一句话描述)”, max_length=100)
-                    content_input = discord.ui.TextInput(label=”详细内容”, style=discord.TextStyle.paragraph)
+                class CreateWishModal(discord.ui.Modal, title=f"许下你的愿望 — {selected_category.value}"):
+                    title_input = discord.ui.TextInput(label="标题 (一句话描述)", max_length=100)
+                    content_input = discord.ui.TextInput(label="详细内容", style=discord.TextStyle.paragraph)
 
                     async def on_submit(modal_self, m_interaction: discord.Interaction):
                         try:
@@ -158,20 +158,20 @@ class WishSystemCog(FeatureCog):
                                 if guild_config else m_interaction.channel
                             )
                             await target_channel.send(embed=embed, view=view)
-                            await m_interaction.response.send_message(“✅ 愿望发布成功！”, ephemeral=True)
+                            await m_interaction.response.send_message("✅ 愿望发布成功！", ephemeral=True)
 
                         except PermissionError as e:
-                            await m_interaction.response.send_message(f”❌ 许愿失败: {e}”, ephemeral=True)
+                            await m_interaction.response.send_message(f"❌ 许愿失败: {e}", ephemeral=True)
                         except Exception as e:
-                            cog.logger.error(f”创建愿望时发生崩溃: {e}”, exc_info=True)
+                            cog.logger.error(f"创建愿望时发生崩溃: {e}", exc_info=True)
                             if not m_interaction.response.is_done():
-                                await m_interaction.response.send_message(“🚨 系统内部错误”, ephemeral=True)
+                                await m_interaction.response.send_message("🚨 系统内部错误", ephemeral=True)
 
                 await sel_interaction.response.send_modal(CreateWishModal())
                 self.stop()
 
         await interaction.response.send_message(
-            “请选择愿望分类：”, view=CategorySelectView(self, engine, user_ctx), ephemeral=True
+            "请选择愿望分类：", view=CategorySelectView(self, engine, user_ctx), ephemeral=True
         )
 
     # ================= 全局组件交互路由 =================
