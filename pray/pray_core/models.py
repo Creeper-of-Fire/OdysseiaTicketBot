@@ -97,6 +97,21 @@ class InProgressWish(BaseWish):
         return super().get_allowed_actions(user)
 
 
+class FrozenWish(BaseWish):
+    state: Literal["FROZEN"] = "FROZEN"
+    supporters: Set[str] = Field(default_factory=set)
+    thread_id: Optional[str] = None
+    freeze_reason: str = "长期无活动自动冻结"
+    claimer_id: Optional[str] = None
+    proposal_link: Optional[str] = None
+
+    def get_allowed_actions(self, user: UserContext) -> Set[str]:
+        actions = super().get_allowed_actions(user)
+        if user.role >= UserRole.ADMIN:
+            actions.add("REOPEN")
+        return actions
+
+
 class ClosedWish(BaseWish):
     state: Literal["CLOSED"] = "CLOSED"
     close_reason: str
@@ -114,6 +129,6 @@ class FulfilledWish(BaseWish):
 # ================= 多态序列化类型 =================
 # 任何地方使用 AnyWish，Pydantic 会自动根据 "state" 字段实例化为正确的子类
 AnyWish = Annotated[
-    Union[ActiveWish, DiscussionWish, InProgressWish, ClosedWish, FulfilledWish],
+    Union[ActiveWish, DiscussionWish, InProgressWish, FrozenWish, ClosedWish, FulfilledWish],
     Field(discriminator="state")
 ]

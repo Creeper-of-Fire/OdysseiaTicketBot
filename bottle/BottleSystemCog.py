@@ -1,4 +1,5 @@
 import typing
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -6,11 +7,12 @@ from discord.ext import commands
 import config
 import config_data
 from utility.feature_cog import FeatureCog
-from .bottle_core.engine import BottleEngine
-from .bottle_core.models import UserContext, UserRole, BottleConfig
-from .bottle_core.repository import BottleRepository
-from .ui.embeds import BottleEmbed
-from .ui.views import BottleView, CreateBottleModal, ReplyBottleModal
+from .bottle_core.engine import BottleEngine, StateTransitionError
+from .bottle_core.manager import BottleDataManager
+from .bottle_core.models import UserContext, UserRole
+from .adapters import AsyncJsonBottleRepository, DiscordBottleAdapter
+from .ui.embeds import BottleEmbed, BottleUIFactory
+from .ui.views import CreateBottleModal, BottleManageView
 
 
 class BottleSystemCog(FeatureCog):
@@ -19,141 +21,26 @@ class BottleSystemCog(FeatureCog):
     def __init__(self, bot):
         super().__init__(bot)
         self._configs = config_data.bottle_config
-        self.repository = BottleRepository.get_instance()
+        self.data_manager = BottleDataManager.get_instance()
 
     # ================= 辅助方法 =================
 
     def _get_engine(self, guild_id: int) -> BottleEngine:
-        """构建领域引擎注入依赖"""
+        repo = AsyncJsonBottleRepository(self.data_manager, guild_id)
         if guild_id not in self._configs:
-            # 使用默认配置
-            bottle_config = BottleConfig()
+            adapter = DiscordBottleAdapter(self.bot, config_data.GuildBottleConfig())
         else:
-            guild_config = self._configs[guild_id]
-            bottle_config = BottleConfig(
-                max_bottles_per_user=guild_config.max_bottles_per_user,
-                cooldown_seconds=guild_config.cooldown_seconds,
-                bottle_lifetime_days=guild_config.bottle_lifetime_days
-            )
-        return BottleEngine(self.repository, bottle_config, guild_id)
+            adapter = DiscordBottleAdapter(self.bot, self._configs[guild_id])
+        return BottleEngine(repo, adapter)
 
     def _get_user_context(self, interaction: discord.Interaction) -> UserContext:
-        """从 Discord 上下文解析业务权限"""
         user_roles = [r.id for r in interaction.user.roles]
-
         role = UserRole.NORMAL
         if interaction.guild_id and interaction.guild_id in self._configs:
             guild_config = self._configs[interaction.guild_id]
             if any(r in guild_config.admin_role_ids for r in user_roles):
                 role = UserRole.ADMIN
-
         return UserContext(user_id=str(interaction.user.id), role=role)
-
-    async def create_bottle(self, interaction: discord.Interaction, content: str):
-        """创建漂流瓶"""
-        user_ctx = self._get_user_context(interaction)
-        engine = self._get_engine(interaction.guild_id)
-
-        try:
-            bottle = await engine.create_bottle(user_ctx, content)
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_success_embed("漂流瓶已成功投放！"),
-                ephemeral=True
-            )
-        except ValueError as e:
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed(str(e)),
-                ephemeral=True
-            )
-        except Exception as e:
-            self.logger.error(f"创建漂流瓶时发生错误: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("系统内部错误，请稍后再试"),
-                ephemeral=True
-            )
-
-    async def find_bottle(self, interaction: discord.Interaction):
-        """查找漂流瓶"""
-        user_ctx = self._get_user_context(interaction)
-        engine = self._get_engine(interaction.guild_id)
-
-        try:
-            bottle = await engine.find_bottle(user_ctx)
-            if not bottle:
-                await interaction.response.send_message(
-                    embed=BottleEmbed.create_error_embed("暂时没有找到漂流瓶，稍后再试吧！"),
-                    ephemeral=True
-                )
-                return
-
-            embed = BottleEmbed.create_bottle_embed(bottle)
-            view = BottleView(bottle.id)
-            await interaction.response.send_message(
-                embed=embed,
-                view=view,
-                ephemeral=True
-            )
-        except Exception as e:
-            self.logger.error(f"查找漂流瓶时发生错误: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("系统内部错误，请稍后再试"),
-                ephemeral=True
-            )
-
-    async def open_bottle(self, interaction: discord.Interaction, bottle_id: str):
-        """打开漂流瓶"""
-        user_ctx = self._get_user_context(interaction)
-        engine = self._get_engine(interaction.guild_id)
-
-        try:
-            bottle = await engine.open_bottle(user_ctx, bottle_id)
-            embed = BottleEmbed.create_bottle_embed(bottle)
-            view = BottleView(bottle.id)
-            await interaction.response.edit_message(
-                embed=embed,
-                view=view
-            )
-        except ValueError as e:
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed(str(e)),
-                ephemeral=True
-            )
-        except Exception as e:
-            self.logger.error(f"打开漂流瓶时发生错误: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("系统内部错误，请稍后再试"),
-                ephemeral=True
-            )
-
-    async def reply_bottle(self, interaction: discord.Interaction, bottle_id: str, reply: str):
-        """回复漂流瓶"""
-        user_ctx = self._get_user_context(interaction)
-        engine = self._get_engine(interaction.guild_id)
-
-        try:
-            bottle = await engine.reply_bottle(user_ctx, bottle_id, reply)
-            embed = BottleEmbed.create_bottle_embed(bottle)
-            view = BottleView(bottle.id)
-            await interaction.response.edit_message(
-                embed=embed,
-                view=view
-            )
-            # 发送回复成功的消息
-            await interaction.followup.send(
-                embed=BottleEmbed.create_success_embed("回复成功！"),
-                ephemeral=True
-            )
-        except ValueError as e:
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed(str(e)),
-                ephemeral=True
-            )
-        except Exception as e:
-            self.logger.error(f"回复漂流瓶时发生错误: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("系统内部错误，请稍后再试"),
-                ephemeral=True
-            )
 
     # ================= 命令 =================
 
@@ -164,15 +51,72 @@ class BottleSystemCog(FeatureCog):
         default_permissions=discord.Permissions(read_messages=True),
     )
 
-    @bottle_group.command(name="扔瓶子", description="🏺 投放一个漂流瓶")
-    async def cmd_throw_bottle(self, interaction: discord.Interaction):
-        """投放漂流瓶：弹出输入框"""
+    @bottle_group.command(name="发布心愿", description="🏺 发布一个心愿漂流瓶")
+    async def cmd_create_bottle(self, interaction: discord.Interaction):
         await interaction.response.send_modal(CreateBottleModal(self))
 
-    @bottle_group.command(name="捞瓶子", description="🏺 捞一个漂流瓶")
-    async def cmd_find_bottle(self, interaction: discord.Interaction):
-        """捞漂流瓶：随机获取一个漂流瓶"""
-        await self.find_bottle(interaction)
+    @bottle_group.command(name="我的心愿", description="📋 查看你发布的心愿列表")
+    async def cmd_my_bottles(self, interaction: discord.Interaction):
+        user_ctx = self._get_user_context(interaction)
+        engine = self._get_engine(interaction.guild_id)
+
+        bottles = await engine.get_user_bottles(user_ctx)
+        if not bottles:
+            await interaction.response.send_message(
+                embed=BottleUIFactory.create_error_embed("你还没有发布过心愿漂流瓶。"),
+                ephemeral=True
+            )
+            return
+
+        lines = []
+        for b in bottles:
+            label = BottleEmbed.STATE_LABELS.get(b.state, b.state)
+            lines.append(f"**{label}** | {b.title} (ID: {b.id[:8]})")
+
+        embed = discord.Embed(
+            title="你的心愿漂流瓶",
+            description="\n".join(lines),
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bottle_group.command(name="待揭榜", description="📋 查看所有待揭榜的心愿")
+    async def cmd_available_bottles(self, interaction: discord.Interaction):
+        user_ctx = self._get_user_context(interaction)
+        engine = self._get_engine(interaction.guild_id)
+
+        bottles = await engine.get_available_bottles(user_ctx)
+        if not bottles:
+            await interaction.response.send_message(
+                embed=BottleUIFactory.create_error_embed("当前没有待揭榜的心愿漂流瓶。"),
+                ephemeral=True
+            )
+            return
+
+        # Show the first available bottle
+        bottle = bottles[0]
+        embed = BottleEmbed(bottle)
+        view = BottleUIFactory.build_view(bottle, user_ctx)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    # ================= 业务方法 =================
+
+    async def create_bottle(self, interaction: discord.Interaction, title: str, content: str):
+        user_ctx = self._get_user_context(interaction)
+        engine = self._get_engine(interaction.guild_id)
+
+        try:
+            bottle = await engine.create_bottle(user_ctx, title, content)
+            await interaction.response.send_message(
+                embed=BottleUIFactory.create_success_embed(f"心愿漂流瓶「{bottle.title}」已成功投放！"),
+                ephemeral=True
+            )
+        except Exception as e:
+            self.logger.error(f"创建漂流瓶时发生错误: {e}", exc_info=True)
+            await interaction.response.send_message(
+                embed=BottleUIFactory.create_error_embed("系统内部错误，请稍后再试"),
+                ephemeral=True
+            )
 
     # ================= 全局组件交互路由 =================
 
@@ -184,37 +128,61 @@ class BottleSystemCog(FeatureCog):
         if not custom_id.startswith("bottle:"): return
 
         parts = custom_id.split(":")
-        if len(parts) < 2: return
+        if len(parts) < 3: return
+        _, action, bottle_id = parts
 
-        action = parts[1]
-        # 从视图中获取 bottle_id
-        bottle_id = None
-        if hasattr(interaction.message, "components"):
-            for component in interaction.message.components:
-                if hasattr(component, "children"):
-                    for child in component.children:
-                        if hasattr(child, "view") and hasattr(child.view, "bottle_id"):
-                            bottle_id = child.view.bottle_id
-                            break
-                    if bottle_id:
-                        break
-
-        if not bottle_id:
-            await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("漂流瓶信息丢失，请重新捞取"),
-                ephemeral=True
-            )
-            return
+        user_ctx = self._get_user_context(interaction)
+        engine = self._get_engine(interaction.guild_id)
 
         try:
-            if action == "open":
-                await self.open_bottle(interaction, bottle_id)
-            elif action == "reply":
-                await interaction.response.send_modal(ReplyBottleModal(self, bottle_id))
+            if action == "claim":
+                bottle = await engine.claim_bottle(user_ctx, bottle_id)
+                if interaction.message:
+                    await interaction.response.edit_message(
+                        embed=BottleEmbed(bottle),
+                        view=BottleUIFactory.build_view(bottle, user_ctx)
+                    )
+                await interaction.followup.send(
+                    embed=BottleUIFactory.create_success_embed("认领成功！"), ephemeral=True
+                )
+
+            elif action == "unclaim":
+                bottle = await engine.unclaim_bottle(user_ctx, bottle_id)
+                if interaction.message:
+                    await interaction.response.edit_message(
+                        embed=BottleEmbed(bottle),
+                        view=BottleUIFactory.build_view(bottle, user_ctx)
+                    )
+                await interaction.followup.send(
+                    embed=BottleUIFactory.create_success_embed("已取消认领。"), ephemeral=True
+                )
+
+            elif action == "complete":
+                bottle = await engine.complete_bottle(user_ctx, bottle_id)
+                if interaction.message:
+                    await interaction.response.edit_message(
+                        embed=BottleEmbed(bottle),
+                        view=BottleUIFactory.build_view(bottle, user_ctx)
+                    )
+                await interaction.followup.send(
+                    embed=BottleUIFactory.create_success_embed("心愿已完成！"), ephemeral=True
+                )
+
+            elif action == "manage":
+                await interaction.response.send_message(
+                    "管理面板",
+                    view=BottleManageView(engine, user_ctx, bottle_id, interaction),
+                    ephemeral=True
+                )
+
+        except (StateTransitionError, ValueError) as e:
+            await interaction.response.send_message(
+                embed=BottleUIFactory.create_error_embed(str(e)), ephemeral=True
+            )
         except Exception as e:
             self.logger.error(f"处理漂流瓶交互时发生错误: {e}", exc_info=True)
             await interaction.response.send_message(
-                embed=BottleEmbed.create_error_embed("系统内部错误，请稍后再试"),
+                embed=BottleUIFactory.create_error_embed("系统内部错误，请稍后再试"),
                 ephemeral=True
             )
 

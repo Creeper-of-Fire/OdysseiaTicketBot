@@ -1,4 +1,4 @@
-from .models import AnyWish, UserContext, UserRole, WishCategory, DiscussionWish, ActiveWish, ClosedWish, FulfilledWish, InProgressWish
+from .models import AnyWish, UserContext, UserRole, WishCategory, DiscussionWish, ActiveWish, ClosedWish, FulfilledWish, InProgressWish, FrozenWish
 from .ports import IWishExternalAdapter, IWishRepository
 
 
@@ -145,22 +145,101 @@ class WishEngine:
         await self._save_and_notify(new_source)
         return new_source
 
-    async def admin_resolve_proposal(self, user: UserContext, wish_id: str, is_accepted: bool) -> AnyWish:
-        """决定提案最终生死"""
+    async def admin_resolve_proposal(self, user: UserContext, wish_id: str, outcome: str) -> AnyWish:
+        """决定提案最终生死。outcome: 'accept' | 'reject_reopen' | 'reject_close'"""
         if user.role < UserRole.ADMIN: raise PermissionError()
         wish = await self.repo.get(wish_id)
 
         if not isinstance(wish, InProgressWish):
             raise StateTransitionError("只有实现中的愿望可以结算。")
 
-        if is_accepted:
+        if outcome == "accept":
             new_wish = FulfilledWish(**wish.model_dump(exclude={"state"}))
             await self.adapter.broadcast_event(f"🎉 愿望 '{wish.title}' 已达成！")
-        else:
+        elif outcome == "reject_reopen":
+            new_wish = DiscussionWish(**wish.model_dump(exclude={"state", "claimer_id", "proposal_link"}))
+            if new_wish.thread_id:
+                await self.adapter.unlock_discussion_thread(new_wish.thread_id)
+        elif outcome == "reject_close":
             new_wish = ClosedWish(
                 close_reason="相关提案未通过审核",
                 **wish.model_dump(exclude={"state", "close_reason"})
             )
+        else:
+            raise ValueError(f"无效的结算结果: {outcome}")
+
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def admin_reopen_wish(self, user: UserContext, wish_id: str) -> DiscussionWish:
+        """重新开启已关闭或已冻结的愿望"""
+        if user.role < UserRole.ADMIN: raise PermissionError()
+        wish = await self.repo.get(wish_id)
+
+        if not isinstance(wish, (ClosedWish, FrozenWish)):
+            raise StateTransitionError("只能重新开启已关闭或已冻结的愿望。")
+
+        exclude_fields = {"state", "close_reason", "merged_into_id", "freeze_reason"}
+        new_wish = DiscussionWish(**wish.model_dump(exclude=exclude_fields))
+
+        if new_wish.thread_id:
+            await self.adapter.unlock_discussion_thread(new_wish.thread_id)
+        await self.adapter.broadcast_event(f"愿望 '{new_wish.title}' 已被管理员重新开启讨论！")
+
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def admin_revert_claim(self, user: UserContext, wish_id: str) -> DiscussionWish:
+        """回退认领：从实现中退回讨论中，清除提案链接"""
+        if user.role < UserRole.ADMIN: raise PermissionError()
+        wish = await self.repo.get(wish_id)
+
+        if not isinstance(wish, InProgressWish):
+            raise StateTransitionError("只能回退实现中的愿望。")
+
+        new_wish = DiscussionWish(**wish.model_dump(exclude={"state", "claimer_id", "proposal_link"}))
+
+        if new_wish.thread_id:
+            await self.adapter.unlock_discussion_thread(new_wish.thread_id)
+
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def admin_force_claim(self, user: UserContext, wish_id: str, claimer_id: str, proposal_link: str) -> InProgressWish:
+        """管理员绕过限制替任意用户强制认领"""
+        if user.role < UserRole.ADMIN: raise PermissionError()
+        wish = await self.repo.get(wish_id)
+
+        if not isinstance(wish, DiscussionWish):
+            raise StateTransitionError("只能认领讨论中的愿望。")
+
+        new_wish = InProgressWish(
+            claimer_id=claimer_id,
+            proposal_link=proposal_link,
+            **wish.model_dump(exclude={"state"})
+        )
+
+        if new_wish.thread_id:
+            await self.adapter.lock_discussion_thread(new_wish.thread_id)
+
+        await self._save_and_notify(new_wish)
+        return new_wish
+
+    async def freeze_wish(self, wish_id: str, reason: str = "长期无活动自动冻结") -> FrozenWish:
+        """将任意非终态愿望冻结"""
+        wish = await self.repo.get(wish_id)
+
+        if isinstance(wish, (ClosedWish, FulfilledWish, FrozenWish)):
+            raise StateTransitionError("已是终态或已冻结。")
+
+        exclude_fields = {"state", "freeze_reason", "close_reason", "merged_into_id"}
+        new_wish = FrozenWish(
+            freeze_reason=reason,
+            **wish.model_dump(exclude=exclude_fields)
+        )
+
+        if getattr(new_wish, "thread_id", None):
+            await self.adapter.lock_discussion_thread(new_wish.thread_id)
 
         await self._save_and_notify(new_wish)
         return new_wish

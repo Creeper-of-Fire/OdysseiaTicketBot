@@ -3,7 +3,7 @@ import discord
 
 from pray.pray_core.models import (
     AnyWish, ActiveWish, DiscussionWish, InProgressWish,
-    ClosedWish, FulfilledWish, UserContext
+    ClosedWish, FrozenWish, FulfilledWish, UserContext
 )
 
 if TYPE_CHECKING:
@@ -15,6 +15,7 @@ class WishEmbed(discord.Embed):
         "ACTIVE": discord.Color.blue(),
         "IN_DISCUSSION": discord.Color.gold(),
         "IN_PROGRESS": discord.Color.purple(),
+        "FROZEN": discord.Color.dark_gray(),
         "FULFILLED": discord.Color.green(),
         "CLOSED": discord.Color.light_gray(),
     }
@@ -39,6 +40,9 @@ class WishEmbed(discord.Embed):
 
         if hasattr(wish, "proposal_link") and wish.proposal_link:
             self.add_field(name="相关提案", value=f"[点击跳转]({wish.proposal_link})", inline=True)
+
+        if isinstance(wish, FrozenWish) and wish.freeze_reason:
+            self.add_field(name="冻结原因", value=wish.freeze_reason, inline=False)
 
         if isinstance(wish, ClosedWish) and wish.close_reason:
             self.add_field(name="关闭原因", value=wish.close_reason, inline=False)
@@ -128,7 +132,15 @@ class WishUIFactory:
                 custom_id=f"wish:claim:{wish.id}"
             ))
 
-        # 3. 渲染管理按钮
+        # 3. 渲染重新开启按钮
+        if "REOPEN" in allowed_actions:
+            view.add_item(discord.ui.Button(
+                label="🔓 重新开启",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"wish:reopen:{wish.id}"
+            ))
+
+        # 4. 渲染管理按钮
         if "MANAGE" in allowed_actions:
             view.add_item(discord.ui.Button(
                 label="⚙️ 管理",

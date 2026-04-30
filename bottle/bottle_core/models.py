@@ -1,45 +1,78 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+import uuid
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel
+from enum import Enum
+from typing import Set, Optional, Literal, Union, Annotated
+
+from pydantic import BaseModel, Field, ConfigDict
 
 
-@dataclass
-class UserContext:
-    """用户上下文，包含用户ID和角色信息"""
+class UserRole(int, Enum):
+    NORMAL = 1
+    ADMIN = 3
+
+
+class UserContext(BaseModel):
     user_id: str
     role: UserRole
 
 
-@dataclass
-class UserRole:
-    """用户角色"""
-    NORMAL = "normal"
-    ADMIN = "admin"
+class BaseBottle(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-
-@dataclass
-class Bottle:
-    """漂流瓶实体"""
-    id: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    author_id: str
+    title: str
     content: str
-    creator_id: str
-    created_at: datetime
-    found_by: Optional[str] = None
-    found_at: Optional[datetime] = None
-    is_opened: bool = False
-    replies: List[str] = field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def update_timestamp(self):
+        self.updated_at = datetime.utcnow()
+
+    def get_allowed_actions(self, user: UserContext) -> Set[str]:
+        actions = set()
+        if user.role >= UserRole.ADMIN or user.user_id == self.author_id:
+            actions.add("MANAGE")
+        return actions
 
 
-class BottleGuild(BaseModel):
-    """服务器漂流瓶数据"""
-    bottles: List[Bottle] = []
+class AvailableBottle(BaseBottle):
+    state: Literal["AVAILABLE"] = "AVAILABLE"
+    claimer_ids: Set[str] = Field(default_factory=set)
+
+    def get_allowed_actions(self, user: UserContext) -> Set[str]:
+        actions = super().get_allowed_actions(user)
+        if user.user_id != self.author_id:
+            actions.add("CLAIM")
+        return actions
 
 
-@dataclass
-class BottleConfig:
-    """漂流瓶配置"""
-    max_bottles_per_user: int = 3
-    cooldown_seconds: int = 3600
-    bottle_lifetime_days: int = 7
+class ClaimedBottle(BaseBottle):
+    state: Literal["CLAIMED"] = "CLAIMED"
+    claimer_ids: Set[str]
+
+    def get_allowed_actions(self, user: UserContext) -> Set[str]:
+        actions = super().get_allowed_actions(user)
+        if user.user_id in self.claimer_ids:
+            actions.add("UNCLAIM")
+        if user.user_id == self.author_id or user.role >= UserRole.ADMIN:
+            actions.add("COMPLETE")
+        return actions
+
+
+class CompletedBottle(BaseBottle):
+    state: Literal["COMPLETED"] = "COMPLETED"
+    claimer_ids: Set[str]
+    completed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExpiredBottle(BaseBottle):
+    state: Literal["EXPIRED"] = "EXPIRED"
+    claimer_ids: Set[str] = Field(default_factory=set)
+
+
+AnyBottle = Annotated[
+    Union[AvailableBottle, ClaimedBottle, CompletedBottle, ExpiredBottle],
+    Field(discriminator="state")
+]
