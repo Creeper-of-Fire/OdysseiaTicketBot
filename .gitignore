@@ -4,4 +4,4 @@
 __pycache__/
 .env
 deploy.env
-data/*.db
+data/
