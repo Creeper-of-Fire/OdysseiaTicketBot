@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
-from complaint.config.loader import save_config
+from complaint.config.loader import config_path, validate_and_save
 from complaint.config.models import ComplaintTypeConfig
 
 if TYPE_CHECKING:
@@ -59,48 +59,39 @@ class ComplaintFormModal(discord.ui.Modal):
 
 
 class AdminEditTemplateModal(discord.ui.Modal):
-    """编辑投诉频道模板。"""
+    """编辑完整投诉系统 TOML 配置。"""
 
     def __init__(self, cog: ComplaintCog, guild_id: int):
         self.cog = cog
         self.guild_id = guild_id
-        config = cog.get_config(guild_id)
-        super().__init__(title="编辑投诉模板", timeout=300)
+        super().__init__(title="编辑投诉配置", timeout=600)
 
-        self._header_input = discord.ui.TextInput(
-            label="频道头部模板",
-            placeholder="支持 {complainant_mention}, {type_label}, {type_emoji}, {timestamp}, {form_section}",
+        path = config_path(guild_id)
+        raw = path.read_text("utf-8") if path.exists() else ""
+
+        self._toml_input = discord.ui.TextInput(
+            label="TOML 配置",
             style=discord.TextStyle.paragraph,
             required=True,
-            max_length=1500,
-            default=config.templates.channel_header,
+            max_length=4000,
+            default=raw,
         )
-        self.add_item(self._header_input)
-
-        self._field_format_input = discord.ui.TextInput(
-            label="表单字段格式",
-            placeholder="例如：**{label}**：{value}",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=200,
-            default=config.templates.form_field_format,
-        )
-        self.add_item(self._field_format_input)
-
-        self._confirm_text_input = discord.ui.TextInput(
-            label="关闭确认文本",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            max_length=500,
-            default=config.templates.confirmation_text,
-        )
-        self.add_item(self._confirm_text_input)
+        self.add_item(self._toml_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        cfg = self.cog.get_config(self.guild_id)
-        cfg.templates.channel_header = self._header_input.value
-        cfg.templates.form_field_format = self._field_format_input.value
-        cfg.templates.confirmation_text = self._confirm_text_input.value
+        try:
+            cfg = validate_and_save(
+                self._toml_input.value.encode("utf-8"), self.guild_id
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ 配置验证失败：\n{e}", ephemeral=True
+            )
+            return
 
-        save_config(cfg, self.guild_id)
-        await interaction.response.send_message("✅ 模板已更新并保存。", ephemeral=True)
+        self.cog._invalidate_config(self.guild_id)
+        await interaction.response.send_message(
+            f"✅ 配置已更新并生效。{len(cfg.types)} 个投诉类型，"
+            f"{len(cfg.role_groups)} 个身份组。",
+            ephemeral=True,
+        )
