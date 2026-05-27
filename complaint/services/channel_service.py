@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import discord
 
 if TYPE_CHECKING:
+    from complaint.ComplaintCog import ComplaintCog
     from complaint.config.models import ComplaintConfig, ComplaintTypeConfig
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def sanitize_channel_name(name: str) -> str:
 
 
 async def create_complaint_channel(
-    bot: discord.Client,
+    cog: ComplaintCog,
     guild: discord.Guild,
     complainant: discord.Member,
     type_config: ComplaintTypeConfig,
@@ -57,7 +58,7 @@ async def create_complaint_channel(
     full_config: ComplaintConfig,
 ) -> discord.TextChannel:
     """创建投诉频道、设置权限、发送初始消息和管理面板。"""
-    from complaint.ui.views import ManagePanelView  # noqa: avoid circular import
+    from complaint.ui.views import ManagePanelView
 
     category_id = full_config.guild.category_id
     if not category_id:
@@ -134,9 +135,9 @@ async def create_complaint_channel(
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
 
-    manage_view = ManagePanelView()
+    manage_view = ManagePanelView(cog)
     await channel.send(embed=_manage_panel_embed(), view=manage_view)
-    bot.add_view(manage_view)
+    cog.bot.add_view(manage_view)
 
     logger.info(
         "已创建投诉频道 %s (类型: %s, 投诉人: %s)",

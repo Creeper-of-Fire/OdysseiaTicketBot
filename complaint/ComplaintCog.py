@@ -9,37 +9,20 @@ from discord.ext import commands
 
 import config
 from utility.feature_cog import FeatureCog
-from utility.permison import is_admin, is_admin_check
+from utility.permison import is_admin
 
 from .config.loader import load_config, read_raw_config, validate_and_save
 from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_service import create_complaint_channel, parse_topic
 from .ui.embeds import (
-    build_close_confirm_embed,
     build_confirm_embed,
     build_entry_embed,
     build_error_embed,
     build_success_embed,
-    build_summon_embed,
-    build_type_select_embed,
 )
 from .ui.modals import ComplaintFormModal
-from .ui.views import (
-    CloseConfirmView,
-    EntryView,
-    build_confirm_proceed_view,
-    build_summon_select_view,
-    build_type_select_view,
-)
-from .ui.modals import ComplaintFormModal
-from .ui.views import (
-    CloseConfirmView,
-    EntryView,
-    build_confirm_proceed_view,
-    build_summon_select_view,
-    build_type_select_view,
-)
+from .ui.views import ConfirmProceedView, EntryView
 
 if TYPE_CHECKING:
     from main import TicketBot
@@ -55,7 +38,7 @@ class ComplaintCog(FeatureCog):
         self._configs: dict[int, ComplaintConfig] = {}
         self._archive_services: dict[int, ComplaintArchiveService] = {}
         self._pending_forms: dict[tuple[int, str], dict[str, str]] = {}
-        bot.add_view(EntryView())
+        bot.add_view(EntryView(self))
         self.logger.info("投诉系统 Cog 已加载")
 
     def get_config(self, guild_id: int) -> ComplaintConfig:
@@ -99,7 +82,7 @@ class ComplaintCog(FeatureCog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await target.send(embed=build_entry_embed(), view=EntryView())
+            await target.send(embed=build_entry_embed(), view=EntryView(self))
         except discord.Forbidden:
             await interaction.edit_original_response(
                 content=f"没有权限在 {target.mention} 发送消息。"
@@ -144,7 +127,6 @@ class ComplaintCog(FeatureCog):
         guild_id = interaction.guild.id
         raw = read_raw_config(guild_id)
         if raw is None:
-            # 生成默认配置并保存
             cfg = self.get_config(guild_id)
             save_config(cfg, guild_id)
             raw = read_raw_config(guild_id)
@@ -249,82 +231,7 @@ class ComplaintCog(FeatureCog):
             embed=build_success_embed(f"频道 {channel.mention} 已归档并删除。")
         )
 
-    # ================= on_interaction 路由 =================
-
-    @commands.Cog.listener("on_interaction")
-    async def on_interaction(self, interaction: discord.Interaction):
-        cid = ""
-        if interaction.data and isinstance(interaction.data, dict):
-            cid = interaction.data.get("custom_id", "")
-        if not cid.startswith("complaint:"):
-            return
-
-        parts = cid.split(":")
-        if len(parts) < 2:
-            return
-        _, action, *rest = parts
-
-        try:
-            if action == "entry":
-                await self._handle_entry(interaction)
-            elif action == "type_select":
-                await self._handle_type_select(interaction)
-            elif action == "confirm_proceed":
-                await self._handle_confirm_proceed(interaction, rest)
-            elif action == "confirm_cancel":
-                await self._handle_confirm_cancel(interaction)
-            elif action == "manage_summon":
-                await self._handle_manage_summon(interaction)
-            elif action == "manage_close":
-                await self._handle_manage_close(interaction)
-            elif action == "summon_select":
-                await self._handle_summon_select(interaction)
-            elif action == "close_confirm":
-                await self._handle_close_confirm(interaction)
-            elif action == "close_cancel":
-                await self._handle_close_cancel(interaction)
-        except Exception as e:
-            self.logger.error("处理交互 %s 失败: %s", cid, e, exc_info=True)
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        f"操作失败：{e}", ephemeral=True
-                    )
-                else:
-                    await interaction.edit_original_response(content=f"操作失败：{e}")
-            except Exception:
-                pass
-
-    # ================= 交互处理器 =================
-
-    async def _handle_entry(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            return
-        cfg = self.get_config(interaction.guild.id)
-        if not cfg.types:
-            await interaction.response.send_message("暂无可用的投诉类型。", ephemeral=True)
-            return
-
-        view = build_type_select_view(cfg)
-        embed = build_type_select_embed()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-    async def _handle_type_select(self, interaction: discord.Interaction):
-        if not interaction.data or not isinstance(interaction.data, dict) or not interaction.guild:
-            return
-        values = interaction.data.get("values", [])
-        if not values:
-            return
-
-        type_id = values[0]
-        cfg = self.get_config(interaction.guild.id)
-        type_config = cfg.get_complaint_type(type_id)
-        if not type_config:
-            await interaction.response.send_message("投诉类型不存在。", ephemeral=True)
-            return
-
-        modal = ComplaintFormModal(self, type_config)
-        await interaction.response.send_modal(modal)
+    # ================= 表单 & 频道创建 =================
 
     async def handle_form_submit(
         self,
@@ -340,32 +247,10 @@ class ComplaintCog(FeatureCog):
         if type_config.requires_confirm:
             self._pending_forms[(interaction.user.id, type_config.id)] = form_data
             embed = build_confirm_embed(type_config)
-            view = build_confirm_proceed_view(type_config.id)
+            view = ConfirmProceedView(self, type_config.id)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
             await self._do_create_channel(interaction, type_config, form_data)
-
-    async def _handle_confirm_proceed(
-        self, interaction: discord.Interaction, rest: list[str]
-    ):
-        if not rest or not interaction.guild:
-            await interaction.response.send_message("确认信息格式错误。", ephemeral=True)
-            return
-
-        type_id = rest[0]
-        cfg = self.get_config(interaction.guild.id)
-        type_config = cfg.get_complaint_type(type_id)
-        if not type_config:
-            await interaction.response.send_message("投诉类型不存在，请重新提交。", ephemeral=True)
-            return
-
-        form_data = self._pending_forms.pop((interaction.user.id, type_id), {})
-        await self._do_create_channel(interaction, type_config, form_data)
-
-    async def _handle_confirm_cancel(self, interaction: discord.Interaction):
-        await interaction.response.update_message(
-            embed=build_success_embed("已取消提交。"), view=None,
-        )
 
     async def _do_create_channel(
         self,
@@ -391,7 +276,7 @@ class ComplaintCog(FeatureCog):
         cfg = self.get_config(interaction.guild.id)
         try:
             channel = await create_complaint_channel(
-                bot=self.bot,
+                cog=self,
                 guild=interaction.guild,
                 complainant=interaction.user,
                 type_config=type_config,
@@ -410,128 +295,6 @@ class ComplaintCog(FeatureCog):
             await followup.send(f"✅ 投诉频道已创建：{channel.mention}", ephemeral=True)
         except Exception:
             pass
-
-    async def _handle_manage_summon(self, interaction: discord.Interaction):
-        if not is_admin_check(interaction) or not interaction.guild:
-            await interaction.response.send_message("仅管理员可使用此功能。", ephemeral=True)
-            return
-
-        cfg = self.get_config(interaction.guild.id)
-        view = build_summon_select_view(cfg)
-        await interaction.response.send_message(embed=build_summon_embed(), view=view, ephemeral=True)
-
-    async def _handle_manage_close(self, interaction: discord.Interaction):
-        if not interaction.channel or not isinstance(interaction.channel, discord.TextChannel):
-            return
-
-        meta = parse_topic(interaction.channel.topic)
-        if not meta:
-            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
-            return
-
-        is_admin_user = is_admin_check(interaction)
-        is_complainant = interaction.user.id == meta.get("complainant")
-
-        if not is_admin_user and not is_complainant:
-            await interaction.response.send_message(
-                "仅投诉人或管理员可关闭此频道。", ephemeral=True
-            )
-            return
-
-        cfg = self.get_config(interaction.guild.id) if interaction.guild else self.get_config(0)
-        embed = build_close_confirm_embed(cfg.templates.confirmation_text)
-        await interaction.response.send_message(embed=embed, view=CloseConfirmView(), ephemeral=True)
-
-    async def _handle_summon_select(self, interaction: discord.Interaction):
-        if not interaction.data or not isinstance(interaction.data, dict):
-            return
-        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
-            return
-
-        values = interaction.data.get("values", [])
-        if not values or values[0] == "none":
-            return
-
-        group_id = values[0]
-        cfg = self.get_config(interaction.guild.id)
-        group = cfg.role_groups.get(group_id)
-        if not group:
-            await interaction.response.send_message("身份组不存在。", ephemeral=True)
-            return
-
-        channel = interaction.channel
-        added = []
-        for role_id in group.role_ids:
-            role = interaction.guild.get_role(role_id)
-            if role:
-                try:
-                    await channel.set_permissions(
-                        role,
-                        view_channel=True,
-                        send_messages=True,
-                        read_message_history=True,
-                        attach_files=True,
-                        reason=f"召唤身份组：{group.label}",
-                    )
-                    added.append(role.mention)
-                except discord.Forbidden:
-                    pass
-
-        if added:
-            await channel.send(
-                f"📢 已召唤 **{group.label}**：{' '.join(added)}",
-                allowed_mentions=discord.AllowedMentions(roles=True, everyone=False),
-            )
-
-        await interaction.response.edit_message(
-            embed=build_success_embed(f"已召唤 {group.label}。"), view=None,
-        )
-
-    async def _handle_close_confirm(self, interaction: discord.Interaction):
-        if not interaction.channel or not isinstance(interaction.channel, discord.TextChannel):
-            return
-        if not interaction.guild:
-            return
-
-        channel = interaction.channel
-        meta = parse_topic(channel.topic)
-        if not meta:
-            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        guild_id = interaction.guild.id
-        cfg = self.get_config(guild_id)
-        type_config = cfg.get_complaint_type(meta.get("type", ""))
-        type_label = type_config.label if type_config else meta.get("type", "未知")
-        type_emoji = type_config.emoji if type_config else "📋"
-
-        try:
-            await self._get_archive_service(guild_id).archive_channel(
-                channel,
-                type_label=type_label,
-                type_emoji=type_emoji,
-                complainant_id=meta["complainant"],
-                form_data={},
-            )
-        except Exception as e:
-            await interaction.edit_original_response(
-                embed=build_error_embed(f"归档失败：{e}")
-            )
-            return
-
-        try:
-            await interaction.edit_original_response(
-                embed=build_success_embed("投诉频道已归档并删除。")
-            )
-        except Exception:
-            pass
-
-    async def _handle_close_cancel(self, interaction: discord.Interaction):
-        await interaction.response.update_message(
-            embed=build_success_embed("已取消关闭操作。"), view=None,
-        )
 
 
 async def setup(bot):
