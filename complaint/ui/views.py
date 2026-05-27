@@ -277,8 +277,9 @@ class CloseConfirmView(discord.ui.View):
         guild_id = interaction.guild.id
         cfg = self.cog.get_config(guild_id)
         type_config = cfg.get_complaint_type(meta.get("type", ""))
-        type_label = type_config.label if type_config else meta.get("type", "未知")
-        type_emoji = type_config.emoji if type_config else "📋"
+        tmpl = cfg.templates
+        type_label = type_config.label if type_config else meta.get("type", tmpl.unknown_type_label)
+        type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
 
         try:
             await self.cog._get_archive_service(guild_id).archive_channel(

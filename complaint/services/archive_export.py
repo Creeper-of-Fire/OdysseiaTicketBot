@@ -184,9 +184,9 @@ async def build_archive(
     channel: discord.TextChannel,
     header_lines: list[str],
     guild_filesize_limit: int,
-    media_budget_bytes: int | None = None,
-    single_image_max_bytes: int | None = None,
-    archive_title: str = "议诉归档",
+    media_budget_bytes: int,
+    single_image_max_bytes: int,
+    archive_title: str,
 ) -> ArchiveBuildResult:
     """导出频道为 DCE 风格 HTML（优先单文件，超限则 ZIP）。
 
@@ -198,10 +198,10 @@ async def build_archive(
 
     warnings: list[str] = []
     limit = max(1, int(guild_filesize_limit * 0.95))
-    configured_media_budget = max(0, int(media_budget_bytes if media_budget_bytes is not None else 32 * 1024 * 1024))
+    configured_media_budget = max(0, int(media_budget_bytes))
     # media_budget/single_image_max 为 0 时表示不限制，保持完整离线归档能力。
     media_budget = configured_media_budget
-    single_image_max = max(0, int(single_image_max_bytes if single_image_max_bytes is not None else 0))
+    single_image_max = max(0, int(single_image_max_bytes))
     offline_bytes_used = 0
     skipped_budget = 0
     skipped_oversize = 0

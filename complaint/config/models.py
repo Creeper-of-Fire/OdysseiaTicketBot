@@ -50,6 +50,8 @@ class TemplateConfig(BaseModel):
     confirmation_text: str = (
         "⚠️ 此操作将归档并永久删除本投诉频道，所有消息将导出为归档文件。确定继续吗？"
     )
+    fallback_emoji: str = "📋"
+    unknown_type_label: str = "未知"
 
 
 class ComplaintConfig(BaseModel):
