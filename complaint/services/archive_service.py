@@ -29,7 +29,6 @@ class ComplaintArchiveService:
         type_label: str,
         type_emoji: str,
         complainant_id: int,
-        visibility: str,
         form_data: dict[str, str],
     ) -> None:
         """归档频道并发送到归档频道，然后删除原频道。
@@ -50,7 +49,6 @@ class ComplaintArchiveService:
             type_label=type_label,
             type_emoji=type_emoji,
             complainant_id=complainant_id,
-            visibility=visibility,
             form_data=form_data,
         )
 
@@ -87,7 +85,6 @@ class ComplaintArchiveService:
                 inline=True,
             )
             summary.add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True)
-            summary.add_field(name="可见性", value=visibility, inline=True)
 
             if form_data:
                 desc_lines = []
@@ -152,14 +149,12 @@ class ComplaintArchiveService:
         type_label: str,
         type_emoji: str,
         complainant_id: int,
-        visibility: str,
         form_data: dict[str, str],
     ) -> list[str]:
         now = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
         lines = [
             f"投诉类型：{type_emoji} {type_label}",
             f"频道：{channel.name}（ID：{channel.id}）",
-            f"可见性：{visibility}",
             f"投诉人：{complainant_id}",
             f"归档时间：{now}",
         ]

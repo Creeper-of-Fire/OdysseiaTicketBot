@@ -18,11 +18,9 @@ class ComplaintFormModal(discord.ui.Modal):
         self,
         cog: ComplaintCog,
         type_config: ComplaintTypeConfig,
-        visibility: str,
     ):
         self.cog = cog
         self.type_config = type_config
-        self.visibility = visibility
         title = f"{type_config.emoji} {type_config.label}" if type_config.emoji else type_config.label
         super().__init__(title=title[:45], timeout=300)
 
@@ -56,7 +54,6 @@ class ComplaintFormModal(discord.ui.Modal):
         await self.cog.handle_form_submit(
             interaction,
             type_config=self.type_config,
-            visibility=self.visibility,
             form_data=form_data,
         )
 
@@ -72,7 +69,7 @@ class AdminEditTemplateModal(discord.ui.Modal):
 
         self._header_input = discord.ui.TextInput(
             label="频道头部模板",
-            placeholder="支持 {complainant_mention}, {type_label}, {type_emoji}, {visibility}, {timestamp}, {form_section}",
+            placeholder="支持 {complainant_mention}, {type_label}, {type_emoji}, {timestamp}, {form_section}",
             style=discord.TextStyle.paragraph,
             required=True,
             max_length=1500,

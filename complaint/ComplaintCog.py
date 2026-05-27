@@ -32,6 +32,14 @@ from .ui.views import (
     build_summon_select_view,
     build_type_select_view,
 )
+from .ui.modals import ComplaintFormModal
+from .ui.views import (
+    CloseConfirmView,
+    EntryView,
+    build_confirm_proceed_view,
+    build_summon_select_view,
+    build_type_select_view,
+)
 
 if TYPE_CHECKING:
     from main import TicketBot
@@ -222,7 +230,6 @@ class ComplaintCog(FeatureCog):
         type_config = cfg.get_complaint_type(meta.get("type", ""))
         type_label = type_config.label if type_config else meta.get("type", "未知")
         type_emoji = type_config.emoji if type_config else "📋"
-        visibility = "公开" if meta.get("visibility") == "public" else "私密"
 
         try:
             await self._get_archive_service(guild_id).archive_channel(
@@ -230,7 +237,6 @@ class ComplaintCog(FeatureCog):
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=meta["complainant"],
-                visibility=visibility,
                 form_data={},
             )
         except Exception as e:
@@ -260,7 +266,7 @@ class ComplaintCog(FeatureCog):
 
         try:
             if action == "entry":
-                await self._handle_entry(interaction, rest[0] if rest else "")
+                await self._handle_entry(interaction)
             elif action == "type_select":
                 await self._handle_type_select(interaction)
             elif action == "confirm_proceed":
@@ -291,16 +297,16 @@ class ComplaintCog(FeatureCog):
 
     # ================= 交互处理器 =================
 
-    async def _handle_entry(self, interaction: discord.Interaction, visibility: str):
-        if visibility not in ("private", "public") or not interaction.guild:
+    async def _handle_entry(self, interaction: discord.Interaction):
+        if not interaction.guild:
             return
         cfg = self.get_config(interaction.guild.id)
         if not cfg.types:
             await interaction.response.send_message("暂无可用的投诉类型。", ephemeral=True)
             return
 
-        view = build_type_select_view(cfg, visibility)
-        embed = build_type_select_embed(visibility)
+        view = build_type_select_view(cfg)
+        embed = build_type_select_embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _handle_type_select(self, interaction: discord.Interaction):
@@ -317,10 +323,7 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("投诉类型不存在。", ephemeral=True)
             return
 
-        cid = interaction.data.get("custom_id", "")
-        visibility = cid.split(":")[-1] if cid else "private"
-
-        modal = ComplaintFormModal(self, type_config, visibility)
+        modal = ComplaintFormModal(self, type_config)
         await interaction.response.send_modal(modal)
 
     async def handle_form_submit(
@@ -328,7 +331,6 @@ class ComplaintCog(FeatureCog):
         interaction: discord.Interaction,
         *,
         type_config: ComplaintTypeConfig | None,
-        visibility: str,
         form_data: dict[str, str],
     ):
         if type_config is None:
@@ -338,19 +340,19 @@ class ComplaintCog(FeatureCog):
         if type_config.requires_confirm:
             self._pending_forms[(interaction.user.id, type_config.id)] = form_data
             embed = build_confirm_embed(type_config)
-            view = build_confirm_proceed_view(type_config.id, visibility)
+            view = build_confirm_proceed_view(type_config.id)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
-            await self._do_create_channel(interaction, type_config, visibility, form_data)
+            await self._do_create_channel(interaction, type_config, form_data)
 
     async def _handle_confirm_proceed(
         self, interaction: discord.Interaction, rest: list[str]
     ):
-        if len(rest) < 2 or not interaction.guild:
+        if not rest or not interaction.guild:
             await interaction.response.send_message("确认信息格式错误。", ephemeral=True)
             return
 
-        type_id, visibility = rest[0], rest[1]
+        type_id = rest[0]
         cfg = self.get_config(interaction.guild.id)
         type_config = cfg.get_complaint_type(type_id)
         if not type_config:
@@ -358,7 +360,7 @@ class ComplaintCog(FeatureCog):
             return
 
         form_data = self._pending_forms.pop((interaction.user.id, type_id), {})
-        await self._do_create_channel(interaction, type_config, visibility, form_data)
+        await self._do_create_channel(interaction, type_config, form_data)
 
     async def _handle_confirm_cancel(self, interaction: discord.Interaction):
         await interaction.response.update_message(
@@ -369,7 +371,6 @@ class ComplaintCog(FeatureCog):
         self,
         interaction: discord.Interaction,
         type_config: ComplaintTypeConfig,
-        visibility: str,
         form_data: dict[str, str],
     ):
         if not interaction.guild:
@@ -394,7 +395,6 @@ class ComplaintCog(FeatureCog):
                 guild=interaction.guild,
                 complainant=interaction.user,
                 type_config=type_config,
-                visibility=visibility,
                 form_data=form_data,
                 full_config=cfg,
             )
@@ -506,7 +506,6 @@ class ComplaintCog(FeatureCog):
         type_config = cfg.get_complaint_type(meta.get("type", ""))
         type_label = type_config.label if type_config else meta.get("type", "未知")
         type_emoji = type_config.emoji if type_config else "📋"
-        visibility = "公开" if meta.get("visibility") == "public" else "私密"
 
         try:
             await self._get_archive_service(guild_id).archive_channel(
@@ -514,7 +513,6 @@ class ComplaintCog(FeatureCog):
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=meta["complainant"],
-                visibility=visibility,
                 form_data={},
             )
         except Exception as e:

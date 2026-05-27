@@ -19,9 +19,8 @@ def encode_topic(
     *,
     complainant_id: int,
     type_id: str,
-    visibility: str,
 ) -> str:
-    return f"{TOPIC_PREFIX}|complainant:{complainant_id}|type:{type_id}|visibility:{visibility}"
+    return f"{TOPIC_PREFIX}|complainant:{complainant_id}|type:{type_id}"
 
 
 def parse_topic(topic: str | None) -> dict | None:
@@ -54,7 +53,6 @@ async def create_complaint_channel(
     guild: discord.Guild,
     complainant: discord.Member,
     type_config: ComplaintTypeConfig,
-    visibility: str,
     form_data: dict[str, str],
     full_config: ComplaintConfig,
 ) -> discord.TextChannel:
@@ -73,9 +71,9 @@ async def create_complaint_channel(
 
     overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] = {
         guild.default_role: discord.PermissionOverwrite(
-            view_channel=(visibility == "public"),
+            view_channel=False,
             send_messages=False,
-            read_message_history=(visibility == "public"),
+            read_message_history=False,
         ),
     }
 
@@ -109,7 +107,6 @@ async def create_complaint_channel(
     topic = encode_topic(
         complainant_id=complainant.id,
         type_id=type_config.id,
-        visibility=visibility,
     )
 
     channel = await guild.create_text_channel(
@@ -122,7 +119,6 @@ async def create_complaint_channel(
 
     header_content = _render_header(
         type_config=type_config,
-        visibility=visibility,
         complainant=complainant,
         form_data=form_data,
         templates=full_config.templates,
@@ -143,8 +139,8 @@ async def create_complaint_channel(
     bot.add_view(manage_view)
 
     logger.info(
-        "已创建投诉频道 %s (类型: %s, 可见性: %s, 投诉人: %s)",
-        channel.name, type_config.id, visibility, complainant.id,
+        "已创建投诉频道 %s (类型: %s, 投诉人: %s)",
+        channel.name, type_config.id, complainant.id,
     )
 
     return channel
@@ -153,14 +149,12 @@ async def create_complaint_channel(
 def _render_header(
     *,
     type_config: ComplaintTypeConfig,
-    visibility: str,
     complainant: discord.Member,
     form_data: dict[str, str],
     templates: "TemplateConfig",
 ) -> str:
     from complaint.config.models import TemplateConfig  # noqa
 
-    vis_label = "公开" if visibility == "public" else "私密"
     timestamp = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
 
     form_section = ""
@@ -176,7 +170,6 @@ def _render_header(
         complainant_mention=complainant.mention,
         type_label=type_config.label,
         type_emoji=type_config.emoji,
-        visibility=vis_label,
         timestamp=timestamp,
         form_section=form_section,
     )

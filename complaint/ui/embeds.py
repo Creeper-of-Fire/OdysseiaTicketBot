@@ -9,18 +9,16 @@ def build_entry_embed() -> discord.Embed:
     return discord.Embed(
         title="📋 投诉中心",
         description=(
-            "如果你需要提交投诉或反馈，请选择下方的方式：\n\n"
-            "🔒 **私密投诉** — 仅你和对应管理可见\n"
-            "🌐 **公开投诉** — 所有成员可见\n"
+            "如果你需要提交投诉或反馈，请点击下方按钮。\n\n"
+            "🔒 仅你和对应管理可见\n"
         ),
         color=0x5865F2,
     )
 
 
-def build_type_select_embed(visibility: str) -> discord.Embed:
-    vis_label = "私密" if visibility == "private" else "公开"
+def build_type_select_embed() -> discord.Embed:
     return discord.Embed(
-        title=f"选择投诉类型（{vis_label}）",
+        title="选择投诉类型",
         description="请从下方选择你要提交的投诉类型。",
         color=0x5865F2,
     )

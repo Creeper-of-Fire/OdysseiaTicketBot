@@ -8,33 +8,24 @@ from complaint.config.models import ComplaintConfig
 # ===== 入口面板 =====
 
 class EntryView(discord.ui.View):
-    """入口面板的持久化 View（私密/公开按钮）。"""
+    """入口面板的持久化 View。"""
 
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="🔒 私密投诉",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:entry:private",
-        row=0,
-    )
-    async def _btn_private(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass  # 由 on_interaction 处理
-
-    @discord.ui.button(
-        label="🌐 公开投诉",
+        label="🔒 提交投诉",
         style=discord.ButtonStyle.primary,
-        custom_id="complaint:entry:public",
+        custom_id="complaint:entry",
         row=0,
     )
-    async def _btn_public(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         pass  # 由 on_interaction 处理
 
 
 # ===== 类型选择 =====
 
-def build_type_select_view(config: ComplaintConfig, visibility: str) -> discord.ui.View:
+def build_type_select_view(config: ComplaintConfig) -> discord.ui.View:
     """构建投诉类型选择的 SelectMenu View。"""
     view = discord.ui.View(timeout=120)
 
@@ -48,7 +39,7 @@ def build_type_select_view(config: ComplaintConfig, visibility: str) -> discord.
         ))
 
     select = discord.ui.Select(
-        custom_id=f"complaint:type_select:{visibility}",
+        custom_id="complaint:type_select",
         placeholder="选择投诉类型...",
         options=options,
     )
@@ -110,15 +101,14 @@ def build_summon_select_view(config: ComplaintConfig) -> discord.ui.View:
 
 def build_confirm_proceed_view(
     type_id: str,
-    visibility: str,
 ) -> discord.ui.View:
-    """构建表单提交前的确认视图。type_id 和 visibility 编码到 custom_id 中。"""
+    """构建表单提交前的确认视图。type_id 编码到 custom_id 中。"""
     view = discord.ui.View(timeout=120)
 
     view.add_item(discord.ui.Button(
         label="✅ 确认提交",
         style=discord.ButtonStyle.success,
-        custom_id=f"complaint:confirm_proceed:{type_id}:{visibility}",
+        custom_id=f"complaint:confirm_proceed:{type_id}",
         row=0,
     ))
     view.add_item(discord.ui.Button(
