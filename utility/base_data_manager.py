@@ -245,7 +245,9 @@ class AsyncGuildDataManager(AsyncJsonDataManager, Generic[T_Guild]):
 
     def __init__(self, *args, **kwargs):
         # 核心魔法：使用 TypeAdapter 直接接管字典类型的校验
-        self._adapter = TypeAdapter(Dict[str, T_Guild])
+        # 使用 self.GUILD_MODEL 而非 T_Guild，因为 TypeVar 在运行时不会被解析为具体类型，
+        # 导致 TypeAdapter 退化为 Dict[str, BaseModel]，加载出的实例缺失 __private_attributes__
+        self._adapter = TypeAdapter(Dict[str, self.GUILD_MODEL])
         # 初始化基类，基类内部会调用我们重写的 load_data
         super().__init__(*args, **kwargs)
 
@@ -316,7 +318,7 @@ class AsyncUserGuildDataManager(AsyncJsonDataManager, Generic[T_User]):
 
     def __init__(self, *args, **kwargs):
         # 魔法：直接适配双层嵌套字典
-        self._adapter = TypeAdapter(Dict[str, Dict[str, T_User]])
+        self._adapter = TypeAdapter(Dict[str, Dict[str, self.USER_MODEL]])
         super().__init__(*args, **kwargs)
 
     def _migrate_raw_data(self, raw_dict: Dict[str, Any]) -> Dict[str, Any]:
