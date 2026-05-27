@@ -14,6 +14,7 @@ from core.embed_link.embed_manager import EmbedLinkManager
 from pray.WishSystemCog import WishSystemCog
 from bottle.BottleSystemCog import BottleSystemCog
 from temp.TempCog import TempCog
+from complaint.ComplaintCog import ComplaintCog
 
 # ===================================================================
 # 日志设置
@@ -135,6 +136,7 @@ class CogManager:
             "wish": WishSystemCog,
             "bottle": BottleSystemCog,
             "temp":TempCog,
+            "complaint": ComplaintCog,
         }
 
     async def load_all_enabled(self):
