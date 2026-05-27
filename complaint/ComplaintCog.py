@@ -66,18 +66,12 @@ class ComplaintCog(FeatureCog):
         default_permissions=discord.Permissions(manage_roles=True),
     )
 
-    @complaint_group.command(name="发布入口面板", description="在当前或指定频道发布投诉入口面板")
-    @app_commands.rename(channel="频道")
-    @app_commands.describe(channel="发布入口面板的目标频道（不填则使用当前频道）")
+    @complaint_group.command(name="发布入口面板", description="在当前频道发布投诉入口面板")
     @is_admin()
-    async def cmd_post_entry(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel | None = None,
-    ):
-        target = channel or interaction.channel
-        if not isinstance(target, discord.TextChannel):
-            await interaction.response.send_message("无法定位目标频道。", ephemeral=True)
+    async def cmd_post_entry(self, interaction: discord.Interaction):
+        target = interaction.channel
+        if target is None:
+            await interaction.response.send_message("无法定位当前频道。", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -85,15 +79,16 @@ class ComplaintCog(FeatureCog):
             await target.send(embed=build_entry_embed(), view=EntryView(self))
         except discord.Forbidden:
             await interaction.edit_original_response(
-                content=f"没有权限在 {target.mention} 发送消息。"
+                content="没有权限在当前频道发送消息。"
             )
             return
         except Exception as e:
             await interaction.edit_original_response(content=f"发布失败：{e}")
             return
 
+        mention = target.mention if hasattr(target, "mention") else target.name
         await interaction.edit_original_response(
-            content=f"已在 {target.mention} 发布投诉入口面板。"
+            content=f"已在 {mention} 发布投诉入口面板。"
         )
 
     @complaint_group.command(name="重载配置", description="从 TOML 文件重新加载投诉配置")
