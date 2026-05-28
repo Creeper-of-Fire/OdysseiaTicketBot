@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import discord
@@ -159,7 +159,7 @@ def _render_header(
     """根据模板渲染频道头部消息。"""
     from complaint.config.models import TemplateConfig  # noqa
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
+    timestamp = f"<t:{int(datetime.now().timestamp())}:f>"
 
     form_section = ""
     if form_data:
