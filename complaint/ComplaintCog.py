@@ -205,14 +205,6 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("该频道不在投诉分类下，无法归档。", ephemeral=True)
             return
 
-        meta = self.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
-        if not meta:
-            await interaction.response.send_message(
-                "该频道未在投诉系统中注册。",
-                ephemeral=True,
-            )
-            return
-
         await interaction.response.send_message(
             embed=build_archive_confirm_embed(
                 cfg.templates.confirmation_text,

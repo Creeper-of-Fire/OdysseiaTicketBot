@@ -8,7 +8,6 @@ from utility.base_data_manager import AsyncGuildDataManager
 class ComplaintChannelMeta(BaseModel):
     complainant_id: int
     type_id: str
-    ticket_number: int | None = None
 
 
 class GuildComplaintData(BaseModel):

@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TICKET_NAME_RE = re.compile(r"^ticket-(\d+)")
+
+
+def parse_ticket_from_name(channel_name: str) -> int | None:
+    m = _TICKET_NAME_RE.match(channel_name)
+    return int(m.group(1)) if m else None
+
 
 def sanitize_channel_name(name: str) -> str:
     name = re.sub(r"[^a-zA-Z0-9一-鿿_-]", "-", name)
@@ -95,7 +102,6 @@ async def create_complaint_channel(
     meta = ComplaintChannelMeta(
         complainant_id=complainant.id,
         type_id=type_config.id,
-        ticket_number=ticket_number,
     )
     cog.channel_manager.register_channel(guild.id, channel.id, meta)
     await cog.channel_manager.save_data()
