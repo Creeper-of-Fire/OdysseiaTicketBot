@@ -35,7 +35,7 @@ async def create_complaint_channel(
     type_config: ComplaintTypeConfig,
     form_data: dict[str, str],
     full_config: ComplaintConfig,
-    ticket_number: int | None = None,
+    ticket_number: int,
 ) -> discord.TextChannel:
     """创建投诉频道、设置权限、发送初始消息和管理面板。"""
     from complaint.services.channel_meta import ComplaintChannelMeta
@@ -87,16 +87,13 @@ async def create_complaint_channel(
         else:
             logger.warning("角色 %s 在服务器 %s 中不存在，跳过权限设置", role_id, guild.id)
 
-    if ticket_number is not None:
-        channel_name = sanitize_channel_name(f"ticket-{ticket_number}")
-    else:
-        channel_name = sanitize_channel_name(f"投诉-{type_config.label}-{complainant.display_name}")
+    channel_name = sanitize_channel_name(f"ticket-{ticket_number}")
 
     channel = await guild.create_text_channel(
         name=channel_name,
         category=category,
         overwrites=overwrites,
-        reason=f"创建投诉频道：{type_config.label}（{complainant}）",
+        reason=f"创建投诉频道 ticket-{ticket_number}",
     )
 
     meta = ComplaintChannelMeta(
@@ -142,7 +139,7 @@ def _render_header(
     complainant: discord.Member,
     form_data: dict[str, str],
     templates: "TemplateConfig",
-    ticket_number: int | None = None,
+    ticket_number: int,
 ) -> str:
     from complaint.config.models import TemplateConfig  # noqa
 
@@ -163,7 +160,7 @@ def _render_header(
         type_emoji=type_config.emoji,
         timestamp=timestamp,
         form_section=form_section,
-        ticket_number=ticket_number or "",
+        ticket_number=ticket_number,
     )
 
 
