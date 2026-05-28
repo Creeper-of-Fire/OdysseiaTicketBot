@@ -169,10 +169,12 @@ class SummonSelectView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.edit_message(view=None)
             return
 
         values = self._select.values
         if not values or values[0] == "none":
+            await interaction.response.edit_message(view=None)
             return
 
         group_id = values[0]
@@ -181,6 +183,8 @@ class SummonSelectView(discord.ui.View):
         if not group:
             await interaction.response.send_message("身份组不存在。", ephemeral=True)
             return
+
+        await interaction.response.defer()
 
         channel = interaction.channel
         added = []
@@ -206,7 +210,7 @@ class SummonSelectView(discord.ui.View):
                 allowed_mentions=discord.AllowedMentions(roles=True, everyone=False),
             )
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=build_success_embed(f"已召唤 {group.label}。"), view=None,
         )
 

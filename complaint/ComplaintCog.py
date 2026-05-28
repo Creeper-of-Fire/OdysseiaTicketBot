@@ -24,7 +24,7 @@ from .ui.embeds import (
     build_success_embed,
 )
 from .ui.modals import ComplaintFormModal
-from .ui.views import ArchiveConfirmView, ConfirmProceedView, DeleteChannelView, EntryView
+from .ui.views import ArchiveConfirmView, ConfirmProceedView, DeleteChannelView, EntryView, ManagePanelView
 
 if TYPE_CHECKING:
     from main import TicketBot
@@ -44,6 +44,7 @@ class ComplaintCog(FeatureCog):
         bot.add_view(EntryView(self))
         bot.add_view(ArchiveConfirmView(self))
         bot.add_view(DeleteChannelView(self))
+        bot.add_view(ManagePanelView(self))
         self.logger.info("投诉系统 Cog 已加载")
 
     def get_config(self, guild_id: int) -> ComplaintConfig:
