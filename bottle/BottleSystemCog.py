@@ -2,17 +2,16 @@ import typing
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 
 import config
 import config_data
 from utility.feature_cog import FeatureCog
-from .bottle_core.engine import BottleEngine, StateTransitionError
+from .bottle_core.engine import BottleEngine
 from .bottle_core.manager import BottleDataManager
 from .bottle_core.models import UserContext, UserRole
 from .adapters import AsyncJsonBottleRepository, DiscordBottleAdapter
 from .ui.embeds import BottleEmbed, BottleUIFactory
-from .ui.views import CreateBottleModal, BottleManageView
+from .ui.views import BottleCardView, CreateBottleModal
 
 
 class BottleSystemCog(FeatureCog):
@@ -22,6 +21,11 @@ class BottleSystemCog(FeatureCog):
         super().__init__(bot)
         self._configs = config_data.bottle_config
         self.data_manager = BottleDataManager.get_instance()
+
+    async def cog_load(self):
+        """注册持久化视图，确保 bot 重启后按钮仍然可用。"""
+        self.bot.add_view(BottleCardView())
+        self.logger.info("已注册 BottleCardView 持久化视图")
 
     # ================= 辅助方法 =================
 
@@ -53,7 +57,7 @@ class BottleSystemCog(FeatureCog):
 
     @bottle_group.command(name="发布心愿", description="🏺 发布一个心愿漂流瓶")
     async def cmd_create_bottle(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(CreateBottleModal(self))
+        await interaction.response.send_modal(CreateBottleModal())
 
     @bottle_group.command(name="我的心愿", description="📋 查看你发布的心愿列表")
     async def cmd_my_bottles(self, interaction: discord.Interaction):
@@ -96,7 +100,7 @@ class BottleSystemCog(FeatureCog):
         # Show the first available bottle
         bottle = bottles[0]
         embed = BottleEmbed(bottle)
-        view = BottleUIFactory.build_view(bottle, user_ctx)
+        view = BottleCardView.for_bottle(bottle, user_ctx)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ================= 业务方法 =================
@@ -118,73 +122,6 @@ class BottleSystemCog(FeatureCog):
                 ephemeral=True
             )
 
-    # ================= 全局组件交互路由 =================
-
-    @commands.Cog.listener()
-    async def on_interaction(self, interaction: discord.Interaction):
-        """统一分发按钮交互"""
-        if interaction.type != discord.InteractionType.component: return
-        custom_id = interaction.data.get("custom_id", "")
-        if not custom_id.startswith("bottle:"): return
-
-        parts = custom_id.split(":")
-        if len(parts) < 3: return
-        _, action, bottle_id = parts
-
-        user_ctx = self._get_user_context(interaction)
-        engine = self._get_engine(interaction.guild_id)
-
-        try:
-            if action == "claim":
-                bottle = await engine.claim_bottle(user_ctx, bottle_id)
-                if interaction.message:
-                    await interaction.response.edit_message(
-                        embed=BottleEmbed(bottle),
-                        view=BottleUIFactory.build_view(bottle, user_ctx)
-                    )
-                await interaction.followup.send(
-                    embed=BottleUIFactory.create_success_embed("认领成功！"), ephemeral=True
-                )
-
-            elif action == "unclaim":
-                bottle = await engine.unclaim_bottle(user_ctx, bottle_id)
-                if interaction.message:
-                    await interaction.response.edit_message(
-                        embed=BottleEmbed(bottle),
-                        view=BottleUIFactory.build_view(bottle, user_ctx)
-                    )
-                await interaction.followup.send(
-                    embed=BottleUIFactory.create_success_embed("已取消认领。"), ephemeral=True
-                )
-
-            elif action == "complete":
-                bottle = await engine.complete_bottle(user_ctx, bottle_id)
-                if interaction.message:
-                    await interaction.response.edit_message(
-                        embed=BottleEmbed(bottle),
-                        view=BottleUIFactory.build_view(bottle, user_ctx)
-                    )
-                await interaction.followup.send(
-                    embed=BottleUIFactory.create_success_embed("心愿已完成！"), ephemeral=True
-                )
-
-            elif action == "manage":
-                await interaction.response.send_message(
-                    "管理面板",
-                    view=BottleManageView(engine, user_ctx, bottle_id, interaction),
-                    ephemeral=True
-                )
-
-        except (StateTransitionError, ValueError) as e:
-            await interaction.response.send_message(
-                embed=BottleUIFactory.create_error_embed(str(e)), ephemeral=True
-            )
-        except Exception as e:
-            self.logger.error(f"处理漂流瓶交互时发生错误: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=BottleUIFactory.create_error_embed("系统内部错误，请稍后再试"),
-                ephemeral=True
-            )
 
 
 if typing.TYPE_CHECKING:

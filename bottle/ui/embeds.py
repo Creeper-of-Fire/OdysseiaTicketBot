@@ -42,7 +42,12 @@ class BottleEmbed(discord.Embed):
                 inline=True
             )
 
-        self.set_footer(text=f"ID: {bottle.id[:8]} | 更新于 {bottle.updated_at.strftime('%m-%d %H:%M')}")
+        self.set_footer(text=f"ID: {bottle.id} | 更新于 {bottle.updated_at.strftime('%m-%d %H:%M')}")
+
+    @staticmethod
+    def extract_bottle_id(embed: discord.Embed) -> str:
+        """从 embed footer 提取 bottle_id。格式: 'ID: {uuid} | 更新于 ...'"""
+        return embed.footer.text.split("ID: ")[1].split(" |")[0]
 
 
 class BottleUIFactory:
