@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import discord
@@ -21,6 +22,8 @@ from utility.permison import is_admin_check
 if TYPE_CHECKING:
     from complaint.ComplaintCog import ComplaintCog
 
+logger = logging.getLogger(__name__)
+
 
 # ===== 入口面板 =====
 
@@ -39,6 +42,7 @@ class EntryView(discord.ui.View):
     )
     async def _btn_submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild:
+            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
             return
         cfg = self.cog.get_config(interaction.guild.id)
         if not cfg.types:
@@ -123,6 +127,7 @@ class ManagePanelView(discord.ui.View):
     )
     async def _btn_close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.channel or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在文本频道内使用。", ephemeral=True)
             return
 
         meta = parse_topic(interaction.channel.topic)
@@ -139,7 +144,8 @@ class ManagePanelView(discord.ui.View):
             )
             return
 
-        cfg = self.cog.get_config(interaction.guild.id) if interaction.guild else self.cog.get_config(0)
+        assert interaction.guild is not None
+        cfg = self.cog.get_config(interaction.guild.id)
         await interaction.response.send_message(
             embed=build_archive_confirm_embed(cfg.templates.confirmation_text),
             view=ArchiveConfirmView(self.cog),
@@ -188,21 +194,30 @@ class SummonSelectView(discord.ui.View):
 
         channel = interaction.channel
         added = []
+        skipped_missing = []
+        skipped_forbidden = []
         for role_id in group.role_ids:
             role = interaction.guild.get_role(role_id)
-            if role:
-                try:
-                    await channel.set_permissions(
-                        role,
-                        view_channel=True,
-                        send_messages=True,
-                        read_message_history=True,
-                        attach_files=True,
-                        reason=f"召唤身份组：{group.label}",
-                    )
-                    added.append(role.mention)
-                except discord.Forbidden:
-                    pass
+            if not role:
+                skipped_missing.append(f"<@&{role_id}>")
+                continue
+            try:
+                await channel.set_permissions(
+                    role,
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    reason=f"召唤身份组：{group.label}",
+                )
+                added.append(role.mention)
+            except discord.Forbidden:
+                skipped_forbidden.append(role.mention)
+
+        if skipped_missing:
+            logger.warning("召唤身份组 %s 时以下角色不存在: %s", group.label, skipped_missing)
+        if skipped_forbidden:
+            logger.warning("召唤身份组 %s 时以下角色权限不足: %s", group.label, skipped_forbidden)
 
         if added:
             await channel.send(
@@ -210,8 +225,20 @@ class SummonSelectView(discord.ui.View):
                 allowed_mentions=discord.AllowedMentions(roles=True, everyone=False),
             )
 
+        parts = []
+        if added:
+            parts.append(f"已成功召唤 {len(added)} 个角色。")
+        if skipped_missing:
+            parts.append(f"{len(skipped_missing)} 个角色已不存在。")
+        if skipped_forbidden:
+            parts.append(f"{len(skipped_forbidden)} 个角色因权限不足跳过。")
+
+        if not parts:
+            parts.append("身份组中没有可用的角色。")
+
         await interaction.edit_original_response(
-            embed=build_success_embed(f"已召唤 {group.label}。"), view=None,
+            embed=build_success_embed("".join(parts)) if added else build_error_embed("".join(parts)),
+            view=None,
         )
 
 
@@ -270,6 +297,7 @@ class ArchiveConfirmView(discord.ui.View):
     )
     async def _btn_archive(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
         channel = interaction.channel
@@ -296,7 +324,11 @@ class ArchiveConfirmView(discord.ui.View):
 
         # 从 topic 中获取 ticket 编号（兼容没有编号的旧频道）
         ticket_str = meta.get("ticket")
-        ticket_number = int(ticket_str) if ticket_str is not None else None
+        try:
+            ticket_number = int(ticket_str) if ticket_str is not None else None
+        except (ValueError, TypeError):
+            logger.warning("ticket 编号解析异常: %s，将忽略", ticket_str)
+            ticket_number = None
 
         try:
             archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
@@ -320,7 +352,7 @@ class ArchiveConfirmView(discord.ui.View):
                 view=DeleteChannelView(self.cog),
             )
         except Exception:
-            pass
+            logger.warning("归档成功 (%s)，但更新交互消息失败", archive_url)
 
     @discord.ui.button(
         label="❌ 取消",
@@ -349,6 +381,7 @@ class DeleteChannelView(discord.ui.View):
     )
     async def _btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
         meta = parse_topic(interaction.channel.topic)
@@ -413,6 +446,7 @@ class DeleteConfirmView(discord.ui.View):
                     embed=build_success_embed(f"频道将在 {i} 秒后删除..."),
                 )
             except Exception:
+                logger.warning("删除倒计时更新消息失败 (channel=%s)", self.channel.id)
                 return
 
         await asyncio.sleep(1)
@@ -421,12 +455,13 @@ class DeleteConfirmView(discord.ui.View):
         try:
             await self.channel.delete(reason="投诉频道已归档 - 手动删除")
         except Exception as e:
+            logger.error("删除频道 %s 失败: %s", self.channel.id, e, exc_info=True)
             try:
                 await interaction.edit_original_response(
                     embed=build_error_embed(f"删除频道失败：{e}"),
                 )
             except Exception:
-                pass
+                logger.warning("删除频道失败且无法通知用户 (channel=%s)", self.channel.id)
 
     @discord.ui.button(
         label="❌ 取消",

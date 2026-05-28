@@ -108,6 +108,8 @@ async def create_complaint_channel(
                 read_message_history=True,
                 attach_files=True,
             )
+        else:
+            logger.warning("角色 %s 在服务器 %s 中不存在，跳过权限设置", role_id, guild.id)
 
     if ticket_number is not None:
         channel_name = sanitize_channel_name(f"ticket-{ticket_number}")

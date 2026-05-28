@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html as html_escape
 import io
+import logging
 import re
 import zipfile
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from datetime import datetime
 from typing import Any, Iterable
 
 import discord
+
+logger = logging.getLogger(__name__)
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -301,7 +304,7 @@ async def build_archive(
             offline_bytes_used += size
             avatars.append((key, guess_avatar_mime(str(url)), data))
         except Exception:
-            # 头像下载失败不影响归档主体
+            logger.debug("头像下载失败 (author_id=%s)，不影响归档主体", getattr(author, "id", "?"))
             return
 
     def _attachment_too_large_before_download(att: discord.Attachment) -> bool:
@@ -319,7 +322,7 @@ async def build_archive(
         try:
             await download_avatar_for(m.author)
         except Exception:
-            pass
+            logger.debug("收集头像异常 (message=%s)", m.id)
 
         for att in m.attachments:
             if not is_image_attachment(att):
@@ -362,6 +365,7 @@ async def build_archive(
             if e.color:
                 color_value = int(e.color.value)
         except Exception:
+            logger.debug("Embed color 解析失败")
             color_value = None
 
         border = f"#{color_value:06x}" if isinstance(color_value, int) else "rgba(255,255,255,0.12)"
@@ -392,10 +396,12 @@ async def build_archive(
         try:
             image_url = (e.image.url or "") if getattr(e, "image", None) else ""
         except Exception:
+            logger.debug("Embed image URL 提取失败")
             image_url = ""
         try:
             thumb_url = (e.thumbnail.url or "") if getattr(e, "thumbnail", None) else ""
         except Exception:
+            logger.debug("Embed thumbnail URL 提取失败")
             thumb_url = ""
 
         media_url = image_url or thumb_url
@@ -410,13 +416,13 @@ async def build_archive(
             if author_name:
                 footer_parts.append(str(author_name))
         except Exception:
-            pass
+            logger.debug("Embed author 提取失败")
         try:
             footer_text = (e.footer.text or "") if getattr(e, "footer", None) else ""
             if footer_text:
                 footer_parts.append(str(footer_text))
         except Exception:
-            pass
+            logger.debug("Embed footer 提取失败")
         try:
             if getattr(e, "timestamp", None):
                 footer_parts.append(fmt_dt(e.timestamp))
@@ -465,6 +471,7 @@ async def build_archive(
                 try:
                     embed_lines.append(render_embed_html(e))
                 except Exception:
+                    logger.debug("Embed 渲染失败 (message=%s)", m.id)
                     continue
             embeds_html = "" if not embed_lines else "<div class='embeds'>" + "".join(embed_lines) + "</div>"
 

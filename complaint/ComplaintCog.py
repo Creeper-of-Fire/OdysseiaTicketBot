@@ -11,7 +11,7 @@ import config
 from utility.feature_cog import FeatureCog
 from utility.permison import is_admin
 
-from .config.loader import load_config, read_raw_config, validate_and_save
+from .config.loader import load_config, read_raw_config, save_config, validate_and_save
 from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_service import create_complaint_channel, parse_topic
@@ -307,7 +307,7 @@ class ComplaintCog(FeatureCog):
                 ephemeral=True,
             )
         except Exception:
-            pass
+            self.logger.warning("投诉频道 %s 已创建，但通知用户失败", channel.id)
 
 
 async def setup(bot):
