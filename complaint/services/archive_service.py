@@ -91,11 +91,11 @@ class ComplaintArchiveService:
                 description=f"已从 {channel.mention} 导出为 {result.mode.upper()}。",
                 color=0x2B2D31,
             )
-            summary.add_field(name="Ticket Owner", value=f"<@{complainant_id}>", inline=True)
-            summary.add_field(name="Ticket Name", value=channel.name, inline=True)
+            summary.add_field(name="投诉人", value=f"<@{complainant_id}>", inline=True)
+            summary.add_field(name="频道名称", value=channel.name, inline=True)
             category_name = channel.category.name if channel.category else "（无分类）"
-            summary.add_field(name="Panel Name", value=category_name, inline=True)
-            summary.add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True)
+            summary.add_field(name="所属分类", value=category_name, inline=True)
+            summary.add_field(name="投诉类型", value=f"{type_emoji} {type_label}", inline=True)
             if ticket_number:
                 summary.add_field(name="工单编号", value=ticket_display(ticket_number), inline=True)
             if operator:
@@ -105,9 +105,9 @@ class ComplaintArchiveService:
                 user_lines = []
                 for us in result.user_stats:
                     name_part = us.global_name or us.name
-                    user_lines.append(f"{us.message_count} - @{us.display_name} - {name_part}#{us.discriminator}")
+                    user_lines.append(f"{us.message_count} 条 — @{us.display_name}（{name_part}#{us.discriminator}）")
                 summary.add_field(
-                    name="Users in transcript",
+                    name="参与用户",
                     value="\n".join(user_lines)[:1024],
                     inline=False,
                 )

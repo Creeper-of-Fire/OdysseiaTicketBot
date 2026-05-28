@@ -12,7 +12,7 @@ from utility.feature_cog import FeatureCog
 from utility.permison import is_admin
 
 from .config.loader import load_config, read_raw_config, save_config, validate_and_save
-from .config.models import ComplaintConfig
+from .config.models import ComplaintConfig, ComplaintTypeConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
 from .services.channel_service import create_complaint_channel, ticket_display
@@ -208,7 +208,6 @@ class ComplaintCog(FeatureCog):
 
         await interaction.response.send_message(
             embed=build_archive_confirm_embed(
-                cfg.templates.confirmation_text,
                 operator_mention=interaction.user.mention,
             ),
             view=ArchiveConfirmView(self),

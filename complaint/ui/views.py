@@ -59,11 +59,12 @@ class EntryView(discord.ui.View):
 # ===== 类型选择 =====
 
 class TypeSelectView(discord.ui.View):
-    """投诉类型下拉选择面板。"""
+    """投诉类型选择面板，选完后需确认才弹出表单。"""
 
     def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
         super().__init__(timeout=120)
         self.cog = cog
+        self._config = config
 
         options = [
             discord.SelectOption(
@@ -92,8 +93,66 @@ class TypeSelectView(discord.ui.View):
             await interaction.response.send_message("投诉类型不存在。", ephemeral=True)
             return
 
+        group_labels = []
+        for gid in type_config.target_role_groups:
+            group = cfg.role_groups.get(gid)
+            if group:
+                group_labels.append(group.label)
+        groups_text = "、".join(group_labels) if group_labels else "无"
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title=f"{type_config.emoji} {type_config.label}",
+                description=(
+                    f"{type_config.description}\n\n"
+                    f"**可见管理组**：{groups_text}\n\n"
+                    "点击 **确认** 开始填写投诉表单。"
+                ),
+                color=0xFEE75C,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(label="✅ 确认", style=discord.ButtonStyle.success, row=1)
+    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild:
+            return
+        type_id = self._select.values[0] if self._select.values else None
+        if not type_id:
+            await interaction.response.edit_message(view=None)
+            return
+
+        cfg = self.cog.get_config(interaction.guild.id)
+        type_config = cfg.get_complaint_type(type_id)
+        if not type_config:
+            await interaction.response.send_message("投诉类型不存在，请重新选择。", ephemeral=True)
+            return
+
         modal = ComplaintFormModal(self.cog, type_config)
         await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消选择。"), view=None,
+        )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        logger.error("TypeSelectView 交互错误 (item=%s): %s", item, error, exc_info=error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("操作出错，请重试。", ephemeral=True)
+            else:
+                await interaction.edit_original_response(
+                    embed=build_error_embed(f"操作出错：{error}"), view=None,
+                )
+        except Exception:
+            logger.error("TypeSelectView 无法回复交互", exc_info=True)
 
 
 # ===== 管理面板 =====
@@ -117,7 +176,7 @@ class ManagePanelView(discord.ui.View):
             return
 
         cfg = self.cog.get_config(interaction.guild.id)
-        view = SummonSelectView(self.cog, cfg)
+        view = SummonSelectView(self.cog, cfg, interaction.guild)
         await interaction.response.send_message(
             embed=build_summon_embed(), view=view, ephemeral=True,
         )
@@ -164,7 +223,9 @@ class ManagePanelView(discord.ui.View):
             return
         cfg = self.cog.get_config(interaction.guild.id)
         await interaction.response.send_message(
-            embed=build_archive_confirm_embed(cfg.templates.confirmation_text),
+            embed=build_archive_confirm_embed(
+                operator_mention=interaction.user.mention,
+            ),
             view=ArchiveConfirmView(self.cog),
             ephemeral=False,
         )
@@ -173,17 +234,26 @@ class ManagePanelView(discord.ui.View):
 # ===== 召唤选择 =====
 
 class SummonSelectView(discord.ui.View):
-    """召唤身份组的下拉选择面板。"""
+    """召唤身份组的两步确认面板。"""
 
-    def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
+    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, guild: discord.Guild):
         super().__init__(timeout=60)
         self.cog = cog
 
-        options = [
-            discord.SelectOption(label=rg.label, value=group_id)
-            for group_id, rg in config.role_groups.items()
-            if rg.role_ids
-        ]
+        options = []
+        for group_id, rg in config.role_groups.items():
+            if not rg.role_ids:
+                continue
+            role_names = []
+            for rid in rg.role_ids:
+                role = guild.get_role(rid)
+                role_names.append(role.name if role else f"（未知角色 {rid}）")
+            desc = "、".join(role_names)
+            options.append(discord.SelectOption(
+                label=rg.label,
+                value=group_id,
+                description=desc[:100],
+            ))
 
         self._select = discord.ui.Select(
             placeholder="选择要召唤的身份组...",
@@ -193,6 +263,43 @@ class SummonSelectView(discord.ui.View):
         self.add_item(self._select)
 
     async def _on_select(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.edit_message(view=None)
+            return
+
+        values = self._select.values
+        if not values or values[0] == "none":
+            await interaction.response.edit_message(view=None)
+            return
+
+        group_id = values[0]
+        cfg = self.cog.get_config(interaction.guild.id)
+        group = cfg.role_groups.get(group_id)
+        if not group:
+            await interaction.response.send_message("身份组不存在。", ephemeral=True)
+            return
+
+        role_lines = []
+        for rid in group.role_ids:
+            role = interaction.guild.get_role(rid)
+            role_lines.append(f"- {role.mention}" if role else f"- ~~未知角色 <@&{rid}>~~")
+        roles_text = "\n".join(role_lines)
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title=f"📢 召唤 **{group.label}**",
+                description=(
+                    f"以下角色将被添加到频道并发送通知：\n\n"
+                    f"{roles_text}\n\n"
+                    "点击 **确认召唤** 完成操作。"
+                ),
+                color=0xFEE75C,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(label="✅ 确认召唤", style=discord.ButtonStyle.success, row=1)
+    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.edit_message(view=None)
             return
@@ -260,22 +367,64 @@ class SummonSelectView(discord.ui.View):
             view=None,
         )
 
+    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消召唤身份组。"), view=None,
+        )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        logger.error("SummonSelectView 交互错误 (item=%s): %s", item, error, exc_info=error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("操作出错，请重试。", ephemeral=True)
+            else:
+                await interaction.edit_original_response(
+                    embed=build_error_embed(f"操作出错：{error}"), view=None,
+                )
+        except Exception:
+            logger.error("SummonSelectView 无法回复交互", exc_info=True)
+
 
 # ===== 召唤用户 =====
 
 class SummonUserSelectView(discord.ui.View):
-    """召唤用户的多选面板。"""
+    """召唤用户的两步确认面板：先选人，再点确认。"""
 
     def __init__(self, cog: ComplaintCog):
         super().__init__(timeout=60)
         self.cog = cog
 
-    @discord.ui.user_select(
-        placeholder="选择要召唤的用户...",
-        max_values=10,
-        row=0,
+        self._select = discord.ui.UserSelect(
+            placeholder="选择要召唤的用户...",
+            max_values=10,
+            row=0,
+        )
+        self._select.callback = self._on_select
+        self.add_item(self._select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        names = "、".join(u.display_name for u in self._select.values)
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="👤 召唤用户",
+                description=f"已选择：{names}\n\n点击 **确认召唤** 完成操作。",
+                color=0x5865F2,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="✅ 确认召唤",
+        style=discord.ButtonStyle.success,
+        row=1,
     )
-    async def _select_users(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.edit_message(view=None)
             return
@@ -284,12 +433,12 @@ class SummonUserSelectView(discord.ui.View):
 
         channel = interaction.channel
         added = []
-        skipped_forbidden = []
+        skipped = []
 
-        for user in select.values:
+        for user in self._select.values:
             member = interaction.guild.get_member(user.id)
             if not member:
-                skipped_forbidden.append(f"<@{user.id}>")
+                skipped.append(f"<@{user.id}>")
                 continue
 
             try:
@@ -303,10 +452,10 @@ class SummonUserSelectView(discord.ui.View):
                 )
                 added.append(member.mention)
             except discord.Forbidden:
-                skipped_forbidden.append(member.mention)
+                skipped.append(member.mention)
 
-        if skipped_forbidden:
-            logger.warning("召唤用户时以下用户权限不足: %s", skipped_forbidden)
+        if skipped:
+            logger.warning("召唤用户时以下用户处理失败: %s", skipped)
 
         if added:
             await channel.send(
@@ -317,9 +466,8 @@ class SummonUserSelectView(discord.ui.View):
         parts = []
         if added:
             parts.append(f"已成功召唤 {len(added)} 位用户。")
-        if skipped_forbidden:
-            parts.append(f"{len(skipped_forbidden)} 位用户因权限不足跳过。")
-
+        if skipped:
+            parts.append(f"{len(skipped)} 位用户处理失败。")
         if not parts:
             parts.append("未选择任何用户。")
 
@@ -327,6 +475,33 @@ class SummonUserSelectView(discord.ui.View):
             embed=build_success_embed("".join(parts)) if added else build_error_embed("".join(parts)),
             view=None,
         )
+
+    @discord.ui.button(
+        label="❌ 取消",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消召唤用户。"), view=None,
+        )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        logger.error("SummonUserSelectView 交互错误 (item=%s): %s", item, error, exc_info=error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("操作出错，请重试。", ephemeral=True)
+            else:
+                await interaction.edit_original_response(
+                    embed=build_error_embed(f"操作出错：{error}"), view=None,
+                )
+        except Exception:
+            logger.error("SummonUserSelectView 无法回复交互", exc_info=True)
 
 
 # ===== 二次确认（表单提交前）=====
@@ -506,7 +681,7 @@ class DeleteConfirmView(discord.ui.View):
         self._cancelled = asyncio.Event()
 
     @discord.ui.button(
-        label="✅ 确认删除",
+        label="✅ 确认删除频道",
         style=discord.ButtonStyle.danger,
         custom_id="complaint:delete_confirm",
         row=0,

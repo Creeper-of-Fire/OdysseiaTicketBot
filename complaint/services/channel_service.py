@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from complaint.ui.embeds import build_manage_panel_embed
+
 if TYPE_CHECKING:
     from complaint.ComplaintCog import ComplaintCog
     from complaint.config.models import ComplaintConfig, ComplaintTypeConfig
@@ -135,7 +137,7 @@ async def create_complaint_channel(
         )
 
     manage_view = ManagePanelView(cog)
-    await channel.send(embed=_manage_panel_embed(), view=manage_view)
+    await channel.send(embed=build_manage_panel_embed(), view=manage_view)
     cog.bot.add_view(manage_view)
 
     logger.info(
@@ -177,11 +179,3 @@ def _render_header(
         ticket_number=ticket_number,
     )
 
-
-def _manage_panel_embed() -> discord.Embed:
-    """构建频道管理面板的 Embed。"""
-    return discord.Embed(
-        title="🛠️ 频道管理面板",
-        description="管理员可使用下方按钮管理本投诉频道。",
-        color=0x5865F2,
-    )
