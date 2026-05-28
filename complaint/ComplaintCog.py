@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import discord
@@ -9,13 +10,14 @@ from discord.ext import commands
 
 import config
 from utility.feature_cog import FeatureCog
+from utility.helpers import try_get_member
 from utility.permison import is_admin
 
 from .config.loader import load_config, read_raw_config, save_config, validate_and_save
 from .config.models import ComplaintConfig, ComplaintTypeConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
-from .services.channel_service import create_complaint_channel, ticket_display
+from .services.channel_service import create_complaint_channel, render_notify_message, ticket_display
 from .services.counter_service import TicketCounterService
 from .ui.embeds import (
     build_archive_confirm_embed,
@@ -23,6 +25,7 @@ from .ui.embeds import (
     build_entry_embed,
     build_error_embed,
     build_manage_panel_embed,
+    build_notify_embed,
     build_success_embed,
 )
 from .ui.modals import ComplaintFormModal
@@ -230,7 +233,7 @@ class ComplaintCog(FeatureCog):
 
         channel = interaction.channel
         cfg = self.get_config(interaction.guild.id)
-        if channel.category_id != cfg.guild.category_id:
+        if channel.category_id not in cfg.get_all_category_ids():
             await interaction.response.send_message("该频道不在投诉分类下，无法归档。", ephemeral=True)
             return
 
@@ -239,6 +242,83 @@ class ComplaintCog(FeatureCog):
                 operator_mention=interaction.user.mention,
             ),
             view=ArchiveConfirmView(self),
+        )
+
+    @complaint_group.command(name="召唤", description="通过用户ID或@提及召唤用户到当前投诉频道")
+    @app_commands.rename(用户="用户标识")
+    @app_commands.describe(用户="用户ID、@提及，或逗号分隔的多个标识")
+    @is_admin()
+    async def cmd_summon(self, interaction: discord.Interaction, 用户: str):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在服务器频道内使用。", ephemeral=True)
+            return
+
+        meta = self.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+        if meta is None:
+            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            return
+
+        raw_parts = [s.strip() for s in 用户.replace("，", ",").split(",") if s.strip()]
+        parsed_ids: list[int] = []
+        invalid: list[str] = []
+
+        for raw in raw_parts:
+            m = re.match(r"^<@!?(\d+)>$", raw)
+            if m:
+                parsed_ids.append(int(m.group(1)))
+            elif raw.isdigit():
+                parsed_ids.append(int(raw))
+            else:
+                invalid.append(raw)
+
+        if not parsed_ids:
+            msg = f"未识别到有效的用户ID。无法解析：{', '.join(invalid)}" if invalid else "未提供任何用户标识。"
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        channel = interaction.channel
+        guild = interaction.guild
+        added: list[str] = []
+        skipped: list[str] = []
+
+        for uid in parsed_ids:
+            member = await try_get_member(guild, uid)
+            if not member:
+                skipped.append(f"`{uid}`（未找到）")
+                continue
+
+            try:
+                await channel.set_permissions(
+                    member,
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    reason=f"召唤用户：{member}（by {interaction.user}）",
+                )
+                added.append(member.mention)
+            except discord.Forbidden:
+                skipped.append(f"{member.mention}（权限不足）")
+
+        if added:
+            await channel.send(
+                f"👤 已召唤用户：{' '.join(added)}",
+                allowed_mentions=discord.AllowedMentions(users=True, everyone=False),
+            )
+
+        parts: list[str] = []
+        if added:
+            parts.append(f"✅ 已成功召唤 {len(added)} 位用户。")
+        if skipped:
+            parts.append(f"⚠️ {len(skipped)} 位处理失败：{', '.join(skipped)}")
+        if invalid:
+            parts.append(f"❌ 无法解析：{', '.join(invalid)}")
+
+        text = "\n".join(parts)
+        await interaction.edit_original_response(
+            embed=build_success_embed(text) if added else build_error_embed(text),
         )
 
     # ================= 表单 & 频道创建 =================
@@ -325,6 +405,20 @@ class ComplaintCog(FeatureCog):
                 pass
             return
 
+        # --- 发送通知 ---
+        if type_config.notify_channel_id and type_config.notify_message:
+            try:
+                await self._send_creation_notify(
+                    guild=interaction.guild,
+                    type_config=type_config,
+                    full_config=cfg,
+                    ticket_number=ticket_number,
+                    complainant=interaction.user,
+                    channel=channel,
+                )
+            except Exception:
+                self.logger.warning("工单 %s 通知发送失败", ticket_number, exc_info=True)
+
         try:
             await followup.send(
                 f"✅ 投诉频道已创建：{channel.mention}（{ticket_display(ticket_number)}）",
@@ -332,6 +426,49 @@ class ComplaintCog(FeatureCog):
             )
         except Exception:
             self.logger.warning("投诉频道 %s 已创建，但通知用户失败", channel.id)
+
+    async def _send_creation_notify(
+        self,
+        *,
+        guild: discord.Guild,
+        type_config: ComplaintTypeConfig,
+        full_config: ComplaintConfig,
+        ticket_number: int,
+        complainant: discord.Member,
+        channel: discord.TextChannel,
+    ) -> None:
+        """工单创建后向配置的频道/帖子发送通知。"""
+        target = self.bot.get_channel(type_config.notify_channel_id)
+        if target is None:
+            try:
+                target = await guild.fetch_channel(type_config.notify_channel_id)
+            except Exception:
+                target = None
+        if not isinstance(target, (discord.TextChannel, discord.Thread)):
+            self.logger.warning("通知目标频道 %s 不存在或类型不符", type_config.notify_channel_id)
+            return
+
+        rendered = render_notify_message(
+            notify_message=type_config.notify_message,
+            full_config=full_config,
+            guild=guild,
+            type_config=type_config,
+            ticket_number=ticket_number,
+            complainant=complainant,
+            channel=channel,
+        )
+        embed = build_notify_embed(
+            type_label=type_config.label,
+            type_emoji=type_config.emoji,
+            ticket_number=ticket_number,
+            channel_mention=channel.mention,
+            complainant_name=complainant.display_name,
+        )
+        await target.send(
+            content=rendered,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
+        )
 
 
 async def setup(bot):

@@ -38,6 +38,14 @@ class ComplaintTypeConfig(BaseModel):
     # 支持宏：{@group_id} → 对应身份组的角色 mention，
     # {type_label}、{type_emoji}、{ticket_number} → 投诉类型信息。
     header_blocks: list[str] = []
+    # 创建工单后向此频道/帖子发送通知 embed。0 = 不发送。
+    notify_channel_id: int = 0
+    # 通知文案模板，渲染后作为消息 content 发送（触发 @mention 推送）。
+    # 支持宏：{complainant}、{channel}、{type_label}、{type_emoji}、
+    # {ticket_number}、{@group_id}。也可直接写 <@&ID> / <@ID>。
+    notify_message: str = ""
+    # 创建工单时使用的分类频道 ID。0 = 使用 guild.category_id。
+    category_id: int = 0
 
 
 class RoleGroupConfig(BaseModel):
@@ -107,3 +115,20 @@ class ComplaintConfig(BaseModel):
             if group:
                 result.extend(group.role_ids)
         return list(dict.fromkeys(result))
+
+    def get_effective_category_id(self, type_id: str) -> int:
+        """获取指定类型的有效 category_id，类型级优先，回退到 guild 级。"""
+        t = self.get_complaint_type(type_id)
+        if t and t.category_id:
+            return t.category_id
+        return self.guild.category_id
+
+    def get_all_category_ids(self) -> set[int]:
+        """收集所有有效的投诉分类 ID（guild 级 + 各类型自定义级）。"""
+        ids: set[int] = set()
+        if self.guild.category_id:
+            ids.add(self.guild.category_id)
+        for t in self.types:
+            if t.category_id:
+                ids.add(t.category_id)
+        return ids

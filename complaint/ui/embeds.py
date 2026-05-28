@@ -145,3 +145,21 @@ def build_error_embed(message: str) -> discord.Embed:
         description=message,
         color=0xED4245,
     )
+
+
+def build_notify_embed(
+    *,
+    type_label: str,
+    type_emoji: str,
+    ticket_number: int,
+    channel_mention: str,
+    complainant_name: str,
+) -> discord.Embed:
+    """构建工单创建通知 Embed。"""
+    return discord.Embed(
+        title="🔔 新工单通知",
+        color=0x5865F2,
+    ).add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True
+    ).add_field(name="工单编号", value=str(ticket_number), inline=True
+    ).add_field(name="投诉人", value=complainant_name, inline=True
+    ).add_field(name="频道", value=channel_mention, inline=False)

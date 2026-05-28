@@ -56,7 +56,7 @@ async def create_complaint_channel(
     from complaint.services.channel_meta import ComplaintChannelMeta
     from complaint.ui.views import ManagePanelView
 
-    category_id = full_config.guild.category_id
+    category_id = full_config.get_effective_category_id(type_config.id)
     if not category_id:
         raise RuntimeError("未配置投诉分类，请先使用 /投诉管理 配置服务器")
 
@@ -232,4 +232,44 @@ def _render_header_blocks(
     for block in header_blocks:
         rendered.append(_MACRO_PATTERN.sub(_replace, block))
     return "\n".join(rendered)
+
+
+def render_notify_message(
+    *,
+    notify_message: str,
+    full_config: ComplaintConfig,
+    guild: discord.Guild,
+    type_config: ComplaintTypeConfig,
+    ticket_number: int,
+    complainant: discord.Member,
+    channel: discord.TextChannel,
+) -> str:
+    """将 notify_message 中的宏替换为实际内容并返回。"""
+    if not notify_message:
+        return ""
+
+    static_macros: dict[str, str] = {
+        "type_label": type_config.label,
+        "type_emoji": type_config.emoji,
+        "ticket_number": str(ticket_number),
+        "complainant": complainant.mention,
+        "channel": channel.mention,
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key.startswith("@"):
+            group_id = key[1:]
+            group = full_config.role_groups.get(group_id)
+            if not group:
+                return ""
+            mentions: list[str] = []
+            for rid in group.role_ids:
+                role = guild.get_role(rid)
+                if role:
+                    mentions.append(role.mention)
+            return " ".join(mentions)
+        return static_macros.get(key, "")
+
+    return _MACRO_PATTERN.sub(_replace, notify_message)
 
