@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import discord
 
 from complaint.config.models import ComplaintConfig
-from complaint.services.channel_service import parse_topic
 from complaint.ui.embeds import (
     build_archive_confirm_embed,
     build_archive_success_embed,
@@ -130,13 +129,17 @@ class ManagePanelView(discord.ui.View):
             await interaction.response.send_message("请在文本频道内使用。", ephemeral=True)
             return
 
-        meta = parse_topic(interaction.channel.topic)
+        if not interaction.guild:
+            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            return
+
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
         if not meta:
-            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
+            await interaction.response.send_message("该频道未在投诉系统中注册。", ephemeral=True)
             return
 
         is_admin_user = is_admin_check(interaction)
-        is_complainant = interaction.user.id == meta.get("complainant")
+        is_complainant = interaction.user.id == meta.complainant_id
 
         if not is_admin_user and not is_complainant:
             await interaction.response.send_message(
@@ -301,13 +304,13 @@ class ArchiveConfirmView(discord.ui.View):
             return
 
         channel = interaction.channel
-        meta = parse_topic(channel.topic)
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
         if not meta:
-            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
+            await interaction.response.send_message("该频道未在投诉系统中注册。", ephemeral=True)
             return
 
         is_admin_user = is_admin_check(interaction)
-        is_complainant = interaction.user.id == meta.get("complainant")
+        is_complainant = interaction.user.id == meta.complainant_id
 
         if not is_admin_user and not is_complainant:
             await interaction.response.send_message("仅投诉人或管理员可执行此操作。", ephemeral=True)
@@ -317,27 +320,19 @@ class ArchiveConfirmView(discord.ui.View):
 
         guild_id = interaction.guild.id
         cfg = self.cog.get_config(guild_id)
-        type_config = cfg.get_complaint_type(meta.get("type", ""))
+        type_config = cfg.get_complaint_type(meta.type_id)
         tmpl = cfg.templates
-        type_label = type_config.label if type_config else meta.get("type", tmpl.unknown_type_label)
+        type_label = type_config.label if type_config else tmpl.unknown_type_label
         type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
-
-        # 从 topic 中获取 ticket 编号（兼容没有编号的旧频道）
-        ticket_str = meta.get("ticket")
-        try:
-            ticket_number = int(ticket_str) if ticket_str is not None else None
-        except (ValueError, TypeError):
-            logger.warning("ticket 编号解析异常: %s，将忽略", ticket_str)
-            ticket_number = None
 
         try:
             archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
                 channel,
                 type_label=type_label,
                 type_emoji=type_emoji,
-                complainant_id=meta["complainant"],
+                complainant_id=meta.complainant_id,
                 form_data={},
-                ticket_number=ticket_number,
+                ticket_number=meta.ticket_number,
                 operator=interaction.user,
             )
         except Exception as e:
@@ -384,13 +379,13 @@ class DeleteChannelView(discord.ui.View):
             await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
-        meta = parse_topic(interaction.channel.topic)
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
         if not meta:
-            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
+            await interaction.response.send_message("该频道未在投诉系统中注册。", ephemeral=True)
             return
 
         is_admin_user = is_admin_check(interaction)
-        is_complainant = interaction.user.id == meta.get("complainant")
+        is_complainant = interaction.user.id == meta.complainant_id
 
         if not is_admin_user and not is_complainant:
             await interaction.response.send_message(
@@ -453,7 +448,11 @@ class DeleteConfirmView(discord.ui.View):
         if self._cancelled.is_set():
             return
         try:
+            guild_id = self.channel.guild.id
+            channel_id = self.channel.id
             await self.channel.delete(reason="投诉频道已归档 - 手动删除")
+            self.cog.channel_manager.remove_channel(guild_id, channel_id)
+            await self.cog.channel_manager.save_data()
         except Exception as e:
             logger.error("删除频道 %s 失败: %s", self.channel.id, e, exc_info=True)
             try:

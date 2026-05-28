@@ -13,38 +13,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TOPIC_PREFIX = "complaint"
-
-
-def encode_topic(
-    *,
-    complainant_id: int,
-    type_id: str,
-    ticket_number: int | None = None,
-) -> str:
-    topic = f"{TOPIC_PREFIX}|complainant:{complainant_id}|type:{type_id}"
-    if ticket_number is not None:
-        topic += f"|ticket:{ticket_number}"
-    return topic
-
-
-def parse_topic(topic: str | None) -> dict | None:
-    if not topic or not topic.startswith(TOPIC_PREFIX):
-        return None
-    parts = topic.split("|")
-    result: dict = {}
-    for part in parts[1:]:
-        if ":" in part:
-            key, value = part.split(":", 1)
-            result[key] = value
-    if "complainant" not in result:
-        return None
-    try:
-        result["complainant"] = int(result["complainant"])
-    except (ValueError, TypeError):
-        return None
-    return result
-
 
 def sanitize_channel_name(name: str) -> str:
     name = re.sub(r"[^a-zA-Z0-9一-鿿_-]", "-", name)
@@ -63,6 +31,7 @@ async def create_complaint_channel(
     ticket_number: int | None = None,
 ) -> discord.TextChannel:
     """创建投诉频道、设置权限、发送初始消息和管理面板。"""
+    from complaint.services.channel_meta import ComplaintChannelMeta
     from complaint.ui.views import ManagePanelView
 
     category_id = full_config.guild.category_id
@@ -115,19 +84,21 @@ async def create_complaint_channel(
         channel_name = sanitize_channel_name(f"ticket-{ticket_number}")
     else:
         channel_name = sanitize_channel_name(f"投诉-{type_config.label}-{complainant.display_name}")
-    topic = encode_topic(
-        complainant_id=complainant.id,
-        type_id=type_config.id,
-        ticket_number=ticket_number,
-    )
 
     channel = await guild.create_text_channel(
         name=channel_name,
         category=category,
-        topic=topic,
         overwrites=overwrites,
         reason=f"创建投诉频道：{type_config.label}（{complainant}）",
     )
+
+    meta = ComplaintChannelMeta(
+        complainant_id=complainant.id,
+        type_id=type_config.id,
+        ticket_number=ticket_number,
+    )
+    cog.channel_manager.register_channel(guild.id, channel.id, meta)
+    await cog.channel_manager.save_data()
 
     header_content = _render_header(
         type_config=type_config,

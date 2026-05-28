@@ -14,7 +14,8 @@ from utility.permison import is_admin
 from .config.loader import load_config, read_raw_config, save_config, validate_and_save
 from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
-from .services.channel_service import create_complaint_channel, parse_topic
+from .services.channel_meta import ComplaintChannelManager
+from .services.channel_service import create_complaint_channel
 from .services.counter_service import TicketCounterService
 from .ui.embeds import (
     build_archive_confirm_embed,
@@ -41,6 +42,7 @@ class ComplaintCog(FeatureCog):
         self._archive_services: dict[int, ComplaintArchiveService] = {}
         self._pending_forms: dict[tuple[int, str], dict[str, str]] = {}
         self._counter_service = TicketCounterService()
+        self.channel_manager = ComplaintChannelManager.get_instance()
         bot.add_view(EntryView(self))
         bot.add_view(ArchiveConfirmView(self))
         bot.add_view(DeleteChannelView(self))
@@ -203,10 +205,10 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("该频道不在投诉分类下，无法归档。", ephemeral=True)
             return
 
-        meta = parse_topic(channel.topic)
+        meta = self.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
         if not meta:
             await interaction.response.send_message(
-                "该频道不是投诉频道（无法从 topic 解析投诉元数据）。",
+                "该频道未在投诉系统中注册。",
                 ephemeral=True,
             )
             return
