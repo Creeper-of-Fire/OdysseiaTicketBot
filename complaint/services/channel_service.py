@@ -20,8 +20,12 @@ def encode_topic(
     *,
     complainant_id: int,
     type_id: str,
+    ticket_number: int | None = None,
 ) -> str:
-    return f"{TOPIC_PREFIX}|complainant:{complainant_id}|type:{type_id}"
+    topic = f"{TOPIC_PREFIX}|complainant:{complainant_id}|type:{type_id}"
+    if ticket_number is not None:
+        topic += f"|ticket:{ticket_number}"
+    return topic
 
 
 def parse_topic(topic: str | None) -> dict | None:
@@ -56,6 +60,7 @@ async def create_complaint_channel(
     type_config: ComplaintTypeConfig,
     form_data: dict[str, str],
     full_config: ComplaintConfig,
+    ticket_number: int | None = None,
 ) -> discord.TextChannel:
     """创建投诉频道、设置权限、发送初始消息和管理面板。"""
     from complaint.ui.views import ManagePanelView
@@ -104,10 +109,14 @@ async def create_complaint_channel(
                 attach_files=True,
             )
 
-    channel_name = sanitize_channel_name(f"投诉-{type_config.label}-{complainant.display_name}")
+    if ticket_number is not None:
+        channel_name = sanitize_channel_name(f"ticket-{ticket_number}")
+    else:
+        channel_name = sanitize_channel_name(f"投诉-{type_config.label}-{complainant.display_name}")
     topic = encode_topic(
         complainant_id=complainant.id,
         type_id=type_config.id,
+        ticket_number=ticket_number,
     )
 
     channel = await guild.create_text_channel(
@@ -123,6 +132,7 @@ async def create_complaint_channel(
         complainant=complainant,
         form_data=form_data,
         templates=full_config.templates,
+        ticket_number=ticket_number,
     )
     await channel.send(content=header_content, allowed_mentions=discord.AllowedMentions.none())
 
@@ -153,6 +163,7 @@ def _render_header(
     complainant: discord.Member,
     form_data: dict[str, str],
     templates: "TemplateConfig",
+    ticket_number: int | None = None,
 ) -> str:
     from complaint.config.models import TemplateConfig  # noqa
 
@@ -173,6 +184,7 @@ def _render_header(
         type_emoji=type_config.emoji,
         timestamp=timestamp,
         form_section=form_section,
+        ticket_number=ticket_number or "",
     )
 
 

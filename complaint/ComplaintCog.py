@@ -15,6 +15,7 @@ from .config.loader import load_config, read_raw_config, validate_and_save
 from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_service import create_complaint_channel, parse_topic
+from .services.counter_service import TicketCounterService
 from .ui.embeds import (
     build_archive_confirm_embed,
     build_confirm_embed,
@@ -39,6 +40,7 @@ class ComplaintCog(FeatureCog):
         self._configs: dict[int, ComplaintConfig] = {}
         self._archive_services: dict[int, ComplaintArchiveService] = {}
         self._pending_forms: dict[tuple[int, str], dict[str, str]] = {}
+        self._counter_service = TicketCounterService()
         bot.add_view(EntryView(self))
         bot.add_view(ArchiveConfirmView(self))
         bot.add_view(DeleteChannelView(self))
@@ -259,6 +261,27 @@ class ComplaintCog(FeatureCog):
             followup = interaction.followup
 
         cfg = self.get_config(interaction.guild.id)
+
+        # --- 获取 ticket 编号 ---
+        archive_channel_id = cfg.guild.archive_channel_id
+        if not archive_channel_id:
+            await followup.send("未配置归档频道，请先使用 /投诉管理 配置服务器。", ephemeral=True)
+            return
+
+        archive_channel = interaction.guild.get_channel(archive_channel_id)
+        if not isinstance(archive_channel, discord.TextChannel):
+            await followup.send("归档频道不可用，请检查配置。", ephemeral=True)
+            return
+
+        try:
+            ticket_number = await self._counter_service.get_next_number(
+                interaction.guild.id, archive_channel,
+            )
+        except RuntimeError as e:
+            await followup.send(str(e), ephemeral=True)
+            return
+
+        # --- 创建频道 ---
         try:
             channel = await create_complaint_channel(
                 cog=self,
@@ -267,6 +290,7 @@ class ComplaintCog(FeatureCog):
                 type_config=type_config,
                 form_data=form_data,
                 full_config=cfg,
+                ticket_number=ticket_number,
             )
         except Exception as e:
             self.logger.error("创建投诉频道失败: %s", e, exc_info=True)
@@ -276,8 +300,17 @@ class ComplaintCog(FeatureCog):
                 pass
             return
 
+        # --- 在频道内发送计数确认 ---
         try:
-            await followup.send(f"✅ 投诉频道已创建：{channel.mention}", ephemeral=True)
+            await channel.send(f"[投诉计数]已发布{ticket_number}")
+        except Exception:
+            pass
+
+        try:
+            await followup.send(
+                f"✅ 投诉频道已创建：{channel.mention}（ticket-{ticket_number}）",
+                ephemeral=True,
+            )
         except Exception:
             pass
 

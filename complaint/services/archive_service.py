@@ -30,6 +30,7 @@ class ComplaintArchiveService:
         type_emoji: str,
         complainant_id: int,
         form_data: dict[str, str],
+        ticket_number: int | None = None,
     ) -> None:
         """归档频道并发送到归档频道（不删除原频道）。
 
@@ -52,6 +53,7 @@ class ComplaintArchiveService:
             type_emoji=type_emoji,
             complainant_id=complainant_id,
             form_data=form_data,
+            ticket_number=ticket_number,
         )
 
         result = None
@@ -64,7 +66,7 @@ class ComplaintArchiveService:
                     guild_filesize_limit=int(guild.filesize_limit),
                     media_budget_bytes=self._media_budget_bytes(),
                     single_image_max_bytes=self._single_image_max_bytes(),
-                    archive_title=f"投诉归档 - {type_label}",
+                    archive_title=f"投诉归档 - {type_label}" + (f" (ticket-{ticket_number})" if ticket_number else ""),
                 )
 
             # Phase 2: 严格验证归档生成结果
@@ -76,8 +78,11 @@ class ComplaintArchiveService:
                 raise RuntimeError("归档生成失败：归档模式未知")
 
             # Phase 3: 发送到归档频道
+            archive_title = f"{type_emoji} 投诉归档｜{type_label}"
+            if ticket_number:
+                archive_title += f" (ticket-{ticket_number})"
             summary = discord.Embed(
-                title=f"{type_emoji} 投诉归档｜{type_label}",
+                title=archive_title,
                 description=f"已从 {channel.mention} 导出为 {result.mode.upper()}。",
                 color=0x2B2D31,
             )
@@ -87,6 +92,8 @@ class ComplaintArchiveService:
                 inline=True,
             )
             summary.add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True)
+            if ticket_number:
+                summary.add_field(name="工单编号", value=f"ticket-{ticket_number}", inline=True)
 
             if form_data:
                 desc_lines = []
@@ -146,11 +153,16 @@ class ComplaintArchiveService:
         type_emoji: str,
         complainant_id: int,
         form_data: dict[str, str],
+        ticket_number: int | None = None,
     ) -> list[str]:
         now = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
         lines = [
             f"投诉类型：{type_emoji} {type_label}",
             f"频道：{channel.name}（ID：{channel.id}）",
+        ]
+        if ticket_number:
+            lines.append(f"工单编号：ticket-{ticket_number}")
+        lines += [
             f"投诉人：{complainant_id}",
             f"归档时间：{now}",
         ]

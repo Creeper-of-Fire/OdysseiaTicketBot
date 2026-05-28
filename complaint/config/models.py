@@ -42,6 +42,7 @@ class GlobalConfig(BaseModel):
 class TemplateConfig(BaseModel):
     channel_header: str = (
         "📌 {complainant_mention} 提交了一份投诉\n"
+        "🎫 工单编号：ticket-{ticket_number}\n"
         "📋 投诉类型：{type_emoji} {type_label}\n"
         "📅 时间：{timestamp}\n"
         "{form_section}"

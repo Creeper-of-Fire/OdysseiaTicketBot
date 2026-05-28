@@ -290,6 +290,10 @@ class ArchiveConfirmView(discord.ui.View):
         type_label = type_config.label if type_config else meta.get("type", tmpl.unknown_type_label)
         type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
 
+        # 从 topic 中获取 ticket 编号（兼容没有编号的旧频道）
+        ticket_str = meta.get("ticket")
+        ticket_number = int(ticket_str) if ticket_str is not None else None
+
         try:
             archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
                 channel,
@@ -297,6 +301,7 @@ class ArchiveConfirmView(discord.ui.View):
                 type_emoji=type_emoji,
                 complainant_id=meta["complainant"],
                 form_data={},
+                ticket_number=ticket_number,
             )
         except Exception as e:
             await interaction.edit_original_response(
