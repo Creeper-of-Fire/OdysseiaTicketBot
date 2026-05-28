@@ -44,6 +44,29 @@ def build_close_confirm_embed(confirmation_text: str) -> discord.Embed:
     )
 
 
+def build_archive_confirm_embed(
+    confirmation_text: str,
+    *,
+    operator_mention: str | None = None,
+) -> discord.Embed:
+    description = confirmation_text
+    if operator_mention:
+        description = f"由 {operator_mention} 发起\n\n{description}"
+    return discord.Embed(
+        title="⚠️ 确认归档",
+        description=description,
+        color=0xED4245,
+    )
+
+
+def build_archive_success_embed(archive_url: str) -> discord.Embed:
+    return discord.Embed(
+        title="✅ 归档完成",
+        description=f"归档文件已发送到归档频道。[查看归档]({archive_url})\n\n点击下方按钮可删除此频道。",
+        color=0x57F287,
+    )
+
+
 def build_summon_embed() -> discord.Embed:
     return discord.Embed(
         title="📢 召唤身份组",

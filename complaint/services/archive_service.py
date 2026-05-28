@@ -22,7 +22,7 @@ class ComplaintArchiveService:
         self._config = config
         self._semaphore = asyncio.Semaphore(config.global_.archive_concurrent_limit)
 
-    async def archive_channel(
+    async def generate_and_send_archive(
         self,
         channel: discord.TextChannel,
         *,
@@ -31,9 +31,11 @@ class ComplaintArchiveService:
         complainant_id: int,
         form_data: dict[str, str],
     ) -> None:
-        """归档频道并发送到归档频道，然后删除原频道。
+        """归档频道并发送到归档频道（不删除原频道）。
 
-        严格保证：只有在归档文件生成且成功发送到归档频道后，才删除原频道。
+        严格保证：归档文件生成且成功发送到归档频道后才返回。
+
+        Returns: 归档消息的跳转链接。
         """
         guild = channel.guild
         archive_channel_id = self._config.guild.archive_channel_id
@@ -125,13 +127,7 @@ class ComplaintArchiveService:
                 "归档发送验证通过：频道 %s 的归档已发送到 %s (消息 ID: %s, 附件数: %d)",
                 channel.id, archive_channel.id, sent_msg.id, len(sent_msg.attachments),
             )
-
-            # Phase 5: 归档已确认成功，安全删除原频道
-            try:
-                await channel.delete(reason=f"投诉频道已归档 - {type_label}")
-            except Exception as e:
-                logger.error("归档后删除频道 %s 失败: %s", channel.id, e)
-                raise RuntimeError(f"归档成功但删除频道失败: {e}")
+            return sent_msg.jump_url
 
         except RuntimeError:
             raise

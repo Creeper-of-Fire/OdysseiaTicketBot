@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import discord
@@ -7,7 +8,8 @@ import discord
 from complaint.config.models import ComplaintConfig
 from complaint.services.channel_service import parse_topic
 from complaint.ui.embeds import (
-    build_close_confirm_embed,
+    build_archive_confirm_embed,
+    build_archive_success_embed,
     build_error_embed,
     build_success_embed,
     build_summon_embed,
@@ -139,9 +141,9 @@ class ManagePanelView(discord.ui.View):
 
         cfg = self.cog.get_config(interaction.guild.id) if interaction.guild else self.cog.get_config(0)
         await interaction.response.send_message(
-            embed=build_close_confirm_embed(cfg.templates.confirmation_text),
-            view=CloseConfirmView(self.cog, interaction.channel),
-            ephemeral=True,
+            embed=build_archive_confirm_embed(cfg.templates.confirmation_text),
+            view=ArchiveConfirmView(self.cog),
+            ephemeral=False,
         )
 
 
@@ -244,35 +246,42 @@ class ConfirmProceedView(discord.ui.View):
         row=0,
     )
     async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.update_message(
+        await interaction.response.edit_message(
             embed=build_success_embed("已取消提交。"), view=None,
         )
 
 
-# ===== 关闭确认 =====
+# ===== 归档确认 =====
 
-class CloseConfirmView(discord.ui.View):
-    def __init__(self, cog: ComplaintCog, channel: discord.TextChannel):
-        super().__init__(timeout=120)
+class ArchiveConfirmView(discord.ui.View):
+    def __init__(self, cog: ComplaintCog):
+        super().__init__(timeout=None)
         self.cog = cog
-        self.channel = channel
 
     @discord.ui.button(
-        label="✅ 确认关闭并归档",
+        label="📦 归档频道",
         style=discord.ButtonStyle.danger,
-        custom_id="complaint:close_confirm",
+        custom_id="complaint:archive_confirm",
         row=0,
     )
-    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.guild:
+    async def _btn_archive(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
             return
 
-        meta = parse_topic(self.channel.topic)
+        channel = interaction.channel
+        meta = parse_topic(channel.topic)
         if not meta:
             await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        is_admin_user = is_admin_check(interaction)
+        is_complainant = interaction.user.id == meta.get("complainant")
+
+        if not is_admin_user and not is_complainant:
+            await interaction.response.send_message("仅投诉人或管理员可执行此操作。", ephemeral=True)
+            return
+
+        await interaction.response.defer()
 
         guild_id = interaction.guild.id
         cfg = self.cog.get_config(guild_id)
@@ -282,8 +291,8 @@ class CloseConfirmView(discord.ui.View):
         type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
 
         try:
-            await self.cog._get_archive_service(guild_id).archive_channel(
-                self.channel,
+            archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
+                channel,
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=meta["complainant"],
@@ -297,7 +306,8 @@ class CloseConfirmView(discord.ui.View):
 
         try:
             await interaction.edit_original_response(
-                embed=build_success_embed("投诉频道已归档并删除。"),
+                embed=build_archive_success_embed(archive_url),
+                view=DeleteChannelView(self.cog),
             )
         except Exception:
             pass
@@ -305,10 +315,118 @@ class CloseConfirmView(discord.ui.View):
     @discord.ui.button(
         label="❌ 取消",
         style=discord.ButtonStyle.secondary,
-        custom_id="complaint:close_cancel",
+        custom_id="complaint:archive_cancel",
         row=0,
     )
     async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.update_message(
-            embed=build_success_embed("已取消关闭操作。"), view=None,
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消归档操作。"), view=None,
+        )
+
+
+# ===== 删除频道（持久化）=====
+
+class DeleteChannelView(discord.ui.View):
+    def __init__(self, cog: ComplaintCog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="🗑️ 删除频道",
+        style=discord.ButtonStyle.danger,
+        custom_id="complaint:archive_delete",
+        row=0,
+    )
+    async def _btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            return
+
+        meta = parse_topic(interaction.channel.topic)
+        if not meta:
+            await interaction.response.send_message("该频道不是投诉频道。", ephemeral=True)
+            return
+
+        is_admin_user = is_admin_check(interaction)
+        is_complainant = interaction.user.id == meta.get("complainant")
+
+        if not is_admin_user and not is_complainant:
+            await interaction.response.send_message(
+                "仅投诉人或管理员可删除此频道。", ephemeral=True,
+            )
+            return
+
+        await interaction.response.edit_message(
+            view=DeleteConfirmView(self.cog, interaction.channel),
+        )
+
+    @discord.ui.button(
+        label="❌ 取消",
+        style=discord.ButtonStyle.secondary,
+        custom_id="complaint:archive_delete_cancel",
+        row=0,
+    )
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消删除操作。"), view=None,
+        )
+
+
+# ===== 删除确认 =====
+
+class DeleteConfirmView(discord.ui.View):
+    def __init__(self, cog: ComplaintCog, channel: discord.TextChannel):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.channel = channel
+        self._cancelled = asyncio.Event()
+
+    @discord.ui.button(
+        label="✅ 确认删除",
+        style=discord.ButtonStyle.danger,
+        custom_id="complaint:delete_confirm",
+        row=0,
+    )
+    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.remove_item(button)
+        countdown = 5
+        await interaction.response.edit_message(
+            embed=build_success_embed(f"频道将在 {countdown} 秒后删除..."),
+            view=self,
+        )
+
+        for i in range(countdown - 1, 0, -1):
+            await asyncio.sleep(1)
+            if self._cancelled.is_set():
+                return
+            try:
+                await interaction.edit_original_response(
+                    embed=build_success_embed(f"频道将在 {i} 秒后删除..."),
+                )
+            except Exception:
+                return
+
+        await asyncio.sleep(1)
+        if self._cancelled.is_set():
+            return
+        try:
+            await self.channel.delete(reason="投诉频道已归档 - 手动删除")
+        except Exception as e:
+            try:
+                await interaction.edit_original_response(
+                    embed=build_error_embed(f"删除频道失败：{e}"),
+                )
+            except Exception:
+                pass
+
+    @discord.ui.button(
+        label="❌ 取消",
+        style=discord.ButtonStyle.secondary,
+        custom_id="complaint:delete_cancel",
+        row=0,
+    )
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._cancelled.set()
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消删除操作。"),
+            view=DeleteChannelView(self.cog),
         )

@@ -16,13 +16,14 @@ from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_service import create_complaint_channel, parse_topic
 from .ui.embeds import (
+    build_archive_confirm_embed,
     build_confirm_embed,
     build_entry_embed,
     build_error_embed,
     build_success_embed,
 )
 from .ui.modals import ComplaintFormModal
-from .ui.views import ConfirmProceedView, EntryView
+from .ui.views import ArchiveConfirmView, ConfirmProceedView, DeleteChannelView, EntryView
 
 if TYPE_CHECKING:
     from main import TicketBot
@@ -39,6 +40,8 @@ class ComplaintCog(FeatureCog):
         self._archive_services: dict[int, ComplaintArchiveService] = {}
         self._pending_forms: dict[tuple[int, str], dict[str, str]] = {}
         bot.add_view(EntryView(self))
+        bot.add_view(ArchiveConfirmView(self))
+        bot.add_view(DeleteChannelView(self))
         self.logger.info("投诉系统 Cog 已加载")
 
     def get_config(self, guild_id: int) -> ComplaintConfig:
@@ -184,15 +187,19 @@ class ComplaintCog(FeatureCog):
         modal = AdminEditTemplateModal(self, interaction.guild.id)
         await interaction.response.send_modal(modal)
 
-    @complaint_group.command(name="强制归档", description="手动归档指定的投诉频道")
-    @app_commands.rename(channel="频道")
-    @app_commands.describe(channel="要归档的投诉频道")
+    @complaint_group.command(name="强制归档", description="在当前投诉频道发起归档")
     @is_admin()
-    async def cmd_force_archive(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-    ):
+    async def cmd_force_archive(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在服务器频道内使用。", ephemeral=True)
+            return
+
+        channel = interaction.channel
+        cfg = self.get_config(interaction.guild.id)
+        if channel.category_id != cfg.guild.category_id:
+            await interaction.response.send_message("该频道不在投诉分类下，无法归档。", ephemeral=True)
+            return
+
         meta = parse_topic(channel.topic)
         if not meta:
             await interaction.response.send_message(
@@ -201,30 +208,12 @@ class ComplaintCog(FeatureCog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        guild_id = channel.guild.id
-        cfg = self.get_config(guild_id)
-        type_config = cfg.get_complaint_type(meta.get("type", ""))
-        tmpl = cfg.templates
-        type_label = type_config.label if type_config else meta.get("type", tmpl.unknown_type_label)
-        type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
-
-        try:
-            await self._get_archive_service(guild_id).archive_channel(
-                channel,
-                type_label=type_label,
-                type_emoji=type_emoji,
-                complainant_id=meta["complainant"],
-                form_data={},
-            )
-        except Exception as e:
-            await interaction.edit_original_response(
-                embed=build_error_embed(f"归档失败：{e}")
-            )
-            return
-
-        await interaction.edit_original_response(
-            embed=build_success_embed(f"频道 {channel.mention} 已归档并删除。")
+        await interaction.response.send_message(
+            embed=build_archive_confirm_embed(
+                cfg.templates.confirmation_text,
+                operator_mention=interaction.user.mention,
+            ),
+            view=ArchiveConfirmView(self),
         )
 
     # ================= 表单 & 频道创建 =================
