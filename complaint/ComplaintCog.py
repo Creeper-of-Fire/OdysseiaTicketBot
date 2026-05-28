@@ -22,6 +22,7 @@ from .ui.embeds import (
     build_confirm_embed,
     build_entry_embed,
     build_error_embed,
+    build_manage_panel_embed,
     build_success_embed,
 )
 from .ui.modals import ComplaintFormModal
@@ -192,6 +193,23 @@ class ComplaintCog(FeatureCog):
         from .ui.modals import AdminEditTemplateModal
         modal = AdminEditTemplateModal(self, interaction.guild.id)
         await interaction.response.send_modal(modal)
+
+    @complaint_group.command(name="重发管理面板", description="在当前投诉频道重新发送管理面板")
+    @is_admin()
+    async def cmd_resend_panel(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在服务器频道内使用。", ephemeral=True)
+            return
+
+        meta = self.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+        if meta is None:
+            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            return
+
+        manage_view = ManagePanelView(self)
+        await interaction.channel.send(embed=build_manage_panel_embed(), view=manage_view)
+        self.bot.add_view(manage_view)
+        await interaction.response.send_message("✅ 管理面板已重新发送。", ephemeral=True)
 
     @complaint_group.command(name="强制归档", description="在当前投诉频道发起归档")
     @is_admin()
