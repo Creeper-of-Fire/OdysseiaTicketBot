@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import discord
 
 if TYPE_CHECKING:
-    from complaint.config.models import ComplaintTypeConfig
+    from complaint.config.models import ComplaintTypeConfig, ComplaintConfig
 
 
 def build_entry_embed() -> discord.Embed:
@@ -26,11 +26,14 @@ def build_entry_embed() -> discord.Embed:
     )
 
 
-def build_type_select_embed() -> discord.Embed:
-    """构建投诉类型选择面板的 Embed。"""
+def build_type_select_embed(config: ComplaintConfig) -> discord.Embed:
+    """构建投诉类型选择面板的 Embed，列出所有可选类型。"""
+    lines = ["请根据你的需求选择最匹配的投诉类型。\n"]
+    for ct in config.types:
+        lines.append(f"{ct.emoji} **{ct.label}** — {ct.description}")
     return discord.Embed(
         title="📋 选择投诉类型",
-        description="请根据你的需求选择最匹配的投诉类型，选择后将进入表单填写环节。",
+        description="\n".join(lines),
         color=0x5865F2,
     )
 
@@ -104,8 +107,9 @@ def build_summon_embed() -> discord.Embed:
         description=(
             "选择要邀请到本频道的身份组。\n\n"
             "被选中的身份组的所有成员将被：\n"
-            "• 添加到频道权限，可以查看和发送消息\n"
-            "• 收到 @mention 通知"
+            "• 添加到频道权限，可以查看和发送消息\n\n"
+            "⚠️ 为避免骚扰大量成员，不会发送 @mention 通知。\n"
+            "如有需要，请手动 @ 相关人员。"
         ),
         color=0x5865F2,
     )

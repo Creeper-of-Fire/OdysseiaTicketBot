@@ -124,17 +124,13 @@ async def create_complaint_channel(
         form_data=form_data,
         templates=full_config.templates,
         ticket_number=ticket_number,
+        full_config=full_config,
+        guild=guild,
     )
-    await channel.send(content=header_content, allowed_mentions=discord.AllowedMentions.none())
-
-    mentions: list[str] = [complainant.mention]
-    for role_id in target_role_ids:
-        mentions.append(f"<@&{role_id}>")
-    if mentions:
-        await channel.send(
-            content=" ".join(mentions),
-            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
-        )
+    await channel.send(
+        content=header_content,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
+    )
 
     manage_view = ManagePanelView(cog)
     await channel.send(embed=build_manage_panel_embed(), view=manage_view)
@@ -155,6 +151,8 @@ def _render_header(
     form_data: dict[str, str],
     templates: "TemplateConfig",
     ticket_number: int,
+    full_config: ComplaintConfig,
+    guild: discord.Guild,
 ) -> str:
     """根据模板渲染频道头部消息。"""
     from complaint.config.models import TemplateConfig  # noqa
@@ -170,6 +168,14 @@ def _render_header(
                 lines.append(templates.form_field_format.format(label=field.label, value=value))
         form_section = "\n".join(lines)
 
+    custom_section = _render_header_blocks(
+        header_blocks=type_config.header_blocks,
+        full_config=full_config,
+        guild=guild,
+        type_config=type_config,
+        ticket_number=ticket_number,
+    )
+
     return templates.channel_header.format(
         complainant_mention=complainant.mention,
         type_label=type_config.label,
@@ -177,5 +183,53 @@ def _render_header(
         timestamp=timestamp,
         form_section=form_section,
         ticket_number=ticket_number,
+        custom_section=custom_section,
     )
+
+
+# header_blocks 支持的宏：{@group_id} → 角色组 mention，
+# {type_label} → 类型名，{type_emoji} → 类型 emoji，{ticket_number} → 工单编号。
+_MACRO_PATTERN = re.compile(r"\{([^}]+)\}")
+
+
+def _render_header_blocks(
+    *,
+    header_blocks: list[str],
+    full_config: ComplaintConfig,
+    guild: discord.Guild,
+    type_config: ComplaintTypeConfig,
+    ticket_number: int,
+) -> str:
+    """将 header_blocks 中的宏替换为实际内容，返回拼接后的文本。"""
+    if not header_blocks:
+        return ""
+
+    # 纯文本宏，直接查表替换
+    static_macros: dict[str, str] = {
+        "type_label": type_config.label,
+        "type_emoji": type_config.emoji,
+        "ticket_number": str(ticket_number),
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        # {@group_id} → 解析角色组并拼接角色 mention
+        if key.startswith("@"):
+            group_id = key[1:]
+            group = full_config.role_groups.get(group_id)
+            if not group:
+                return ""
+            mentions: list[str] = []
+            for rid in group.role_ids:
+                role = guild.get_role(rid)
+                if role:
+                    mentions.append(role.mention)
+            return " ".join(mentions)
+        # 纯文本宏
+        return static_macros.get(key, "")
+
+    rendered = []
+    for block in header_blocks:
+        rendered.append(_MACRO_PATTERN.sub(_replace, block))
+    return "\n".join(rendered)
 

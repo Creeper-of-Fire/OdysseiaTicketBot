@@ -52,7 +52,7 @@ class EntryView(discord.ui.View):
 
         view = TypeSelectView(self.cog, cfg)
         await interaction.response.send_message(
-            embed=build_type_select_embed(), view=view, ephemeral=True,
+            embed=build_type_select_embed(cfg), view=view, ephemeral=True,
         )
 
 
@@ -100,11 +100,15 @@ class TypeSelectView(discord.ui.View):
                 group_labels.append(group.label)
         groups_text = "、".join(group_labels) if group_labels else "无"
 
+        detail = type_config.description
+        if type_config.detail_description:
+            detail += f"\n\n{type_config.detail_description}"
+
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title=f"{type_config.emoji} {type_config.label}",
                 description=(
-                    f"{type_config.description}\n\n"
+                    f"{detail}\n\n"
                     f"**可见管理组**：{groups_text}\n\n"
                     "点击 **确认** 开始填写投诉表单。"
                 ),
@@ -346,9 +350,14 @@ class SummonSelectView(discord.ui.View):
             logger.warning("召唤身份组 %s 时以下角色权限不足: %s", group.label, skipped_forbidden)
 
         if added:
+            role_names = []
+            for role_id in group.role_ids:
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    role_names.append(role.name)
             await channel.send(
-                f"📢 已召唤 **{group.label}**：{' '.join(added)}",
-                allowed_mentions=discord.AllowedMentions(roles=True, everyone=False),
+                f"📢 **{group.label}** 已获权访问本频道（{', '.join(role_names)}）",
+                allowed_mentions=discord.AllowedMentions.none(),
             )
 
         parts = []
@@ -409,7 +418,8 @@ class SummonUserSelectView(discord.ui.View):
         self.add_item(self._select)
 
     async def _on_select(self, interaction: discord.Interaction):
-        names = "、".join(u.display_name for u in self._select.values)
+        lines = [f"{u.mention} ({u.name})" for u in self._select.values]
+        names = "\n".join(lines)
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="👤 召唤用户",

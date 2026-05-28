@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from complaint.services.channel_service import TICKET_PREFIX
 
@@ -24,9 +24,20 @@ class ComplaintTypeConfig(BaseModel):
     label: str
     emoji: str = ""
     description: str = ""
+    # 选中后展示的详细说明，支持多行。为空时不追加额外内容。
+    detail_description: str = ""
+
+    @field_validator("detail_description", mode="before")
+    @classmethod
+    def _trim_detail(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
     requires_confirm: bool = False
     target_role_groups: list[str] = []
     form_fields: list[FormFieldConfig] = []
+    # 自定义通知块，每条一行，渲染到频道 header 末尾。
+    # 支持宏：{@group_id} → 对应身份组的角色 mention，
+    # {type_label}、{type_emoji}、{ticket_number} → 投诉类型信息。
+    header_blocks: list[str] = []
 
 
 class RoleGroupConfig(BaseModel):
@@ -58,7 +69,8 @@ class TemplateConfig(BaseModel):
         f"🎫 工单编号：{TICKET_PREFIX}-{{ticket_number}}\n"
         "📋 投诉类型：{type_emoji} {type_label}\n"
         "📅 时间：{timestamp}\n"
-        "{form_section}"
+        "{form_section}\n"
+        "{custom_section}"
     )
     form_field_format: str = "**{label}**：{value}"
     fallback_emoji: str = "📋"
