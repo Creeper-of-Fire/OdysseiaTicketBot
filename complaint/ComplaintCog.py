@@ -62,6 +62,7 @@ class ComplaintCog(FeatureCog):
         self._archive_services.pop(guild_id, None)
 
     def _get_archive_service(self, guild_id: int) -> ComplaintArchiveService:
+        """按 guild_id 获取归档服务实例（依赖配置缓存）。"""
         self.get_config(guild_id)
         return self._archive_services[guild_id]
 
@@ -221,7 +222,8 @@ class ComplaintCog(FeatureCog):
         *,
         type_config: ComplaintTypeConfig | None,
         form_data: dict[str, str],
-    ):
+    ) -> None:
+        """处理表单提交：需要确认的类型走确认流程，否则直接创建频道。"""
         if type_config is None:
             await interaction.response.send_message("内部错误：投诉类型丢失。", ephemeral=True)
             return
@@ -239,7 +241,8 @@ class ComplaintCog(FeatureCog):
         interaction: discord.Interaction,
         type_config: ComplaintTypeConfig,
         form_data: dict[str, str],
-    ):
+    ) -> None:
+        """执行投诉频道创建：分配工单编号、创建频道、发送初始消息。"""
         if not interaction.guild:
             await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
             return

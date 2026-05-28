@@ -15,6 +15,7 @@ DATA_DIR = Path("data")
 
 
 def config_path(guild_id: int) -> Path:
+    """返回给定服务器的 TOML 配置文件路径。"""
     return DATA_DIR / f"complaint_{guild_id}.toml"
 
 
@@ -93,6 +94,7 @@ def read_raw_config(guild_id: int) -> bytes | None:
 
 
 def _merge_into_doc(doc: tomlkit.TOMLDocument, data: dict) -> None:
+    """将 Pydantic 导出的 dict 合并回已有 TOML 文档，保留原始格式和注释。"""
     for key, value in data.items():
         if key == "types":
             doc[key] = tomlkit.item(_convert_lists(value))
@@ -111,7 +113,8 @@ def _merge_into_doc(doc: tomlkit.TOMLDocument, data: dict) -> None:
             doc[key] = value
 
 
-def _merge_dict(table, data: dict) -> None:
+def _merge_dict(table: tomlkit.TOMLDocument | dict, data: dict) -> None:
+    """递归合并 dict 到 tomlkit table。"""
     for k, v in data.items():
         if isinstance(v, dict) and k in table and isinstance(table.get(k), tomlkit.TOMLDocument):
             _merge_dict(table[k], v)
@@ -120,6 +123,7 @@ def _merge_dict(table, data: dict) -> None:
 
 
 def _convert_lists(items: list) -> list:
+    """将嵌套 list/dict 转为 tomlkit 可序列化的纯 Python 对象。"""
     result = []
     for item in items:
         if isinstance(item, dict):
@@ -132,6 +136,7 @@ def _convert_lists(items: list) -> list:
 
 
 def _convert_dict(d: dict) -> dict:
+    """递归转换 dict 中的嵌套 list/dict 为 tomlkit 兼容类型。"""
     result = {}
     for k, v in d.items():
         if isinstance(v, dict):

@@ -43,6 +43,7 @@ class ComplaintFormModal(discord.ui.Modal):
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        """收集表单输入并转交 Cog 处理。"""
         form_data: dict[str, str] = {}
         for key in self._field_keys:
             for item in self.children:
@@ -79,6 +80,7 @@ class AdminEditTemplateModal(discord.ui.Modal):
         self.add_item(self._toml_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        """验证并保存编辑后的 TOML 配置。"""
         try:
             cfg = validate_and_save(
                 self._toml_input.value.encode("utf-8"), self.guild_id

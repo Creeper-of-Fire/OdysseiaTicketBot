@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class ComplaintArchiveService:
+    """投诉频道归档服务，负责生成归档文件并发送到归档频道。"""
+
     def __init__(self, config: ComplaintConfig):
         self._config = config
         self._semaphore = asyncio.Semaphore(config.global_.archive_concurrent_limit)
@@ -33,12 +35,13 @@ class ComplaintArchiveService:
         form_data: dict[str, str],
         ticket_number: int | None = None,
         operator: discord.Member | discord.User | None = None,
-    ) -> None:
+    ) -> str:
         """归档频道并发送到归档频道（不删除原频道）。
 
         严格保证：归档文件生成且成功发送到归档频道后才返回。
 
-        Returns: 归档消息的跳转链接。
+        Returns:
+            归档消息的跳转链接。
         """
         guild = channel.guild
         archive_channel_id = self._config.guild.archive_channel_id
@@ -169,6 +172,7 @@ class ComplaintArchiveService:
         form_data: dict[str, str],
         ticket_number: int | None = None,
     ) -> list[str]:
+        """构建归档摘要头部行。"""
         now = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
         lines = [
             f"投诉类型：{type_emoji} {type_label}",
@@ -187,9 +191,11 @@ class ComplaintArchiveService:
         return lines
 
     def _media_budget_bytes(self) -> int:
+        """将 media_budget_mb 转换为字节数，0 表示不限制。"""
         mb = self._config.global_.media_budget_mb
         return mb * 1024 * 1024 if mb > 0 else 0
 
     def _single_image_max_bytes(self) -> int:
+        """将 single_image_max_mb 转换为字节数，0 表示不限制。"""
         mb = self._config.global_.single_image_max_mb
         return mb * 1024 * 1024 if mb > 0 else 0

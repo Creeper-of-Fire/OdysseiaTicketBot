@@ -14,13 +14,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TICKET_PREFIX = "工单"
+"""工单编号前缀，用于频道名和显示文本。"""
 
 
 def ticket_display(number: int) -> str:
+    """将编号格式化为显示用的工单标识（如 "工单-1"）。"""
     return f"{TICKET_PREFIX}-{number}"
 
 
 def parse_ticket_from_name(channel_name: str) -> int | None:
+    """从频道名中解析工单编号，解析失败返回 None。"""
     prefix = f"{TICKET_PREFIX}-"
     if channel_name.startswith(prefix):
         try:
@@ -31,6 +34,7 @@ def parse_ticket_from_name(channel_name: str) -> int | None:
 
 
 def sanitize_channel_name(name: str) -> str:
+    """清理字符串使其符合 Discord 频道名要求。"""
     name = re.sub(r"[^a-zA-Z0-9一-鿿_-]", "-", name)
     name = re.sub(r"-{2,}", "-", name)
     name = name.strip("-")
@@ -150,6 +154,7 @@ def _render_header(
     templates: "TemplateConfig",
     ticket_number: int,
 ) -> str:
+    """根据模板渲染频道头部消息。"""
     from complaint.config.models import TemplateConfig  # noqa
 
     timestamp = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M UTC")
@@ -174,6 +179,7 @@ def _render_header(
 
 
 def _manage_panel_embed() -> discord.Embed:
+    """构建频道管理面板的 Embed。"""
     return discord.Embed(
         title="🛠️ 频道管理面板",
         description="管理员可使用下方按钮管理本投诉频道。",

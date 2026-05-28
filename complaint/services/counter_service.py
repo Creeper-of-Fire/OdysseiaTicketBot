@@ -55,6 +55,7 @@ class TicketCounterService:
             return next_number
 
     def _get_lock(self, guild_id: int) -> asyncio.Lock:
+        """获取指定服务器的异步锁（按需创建）。"""
         if guild_id not in self._locks:
             self._locks[guild_id] = asyncio.Lock()
         return self._locks[guild_id]

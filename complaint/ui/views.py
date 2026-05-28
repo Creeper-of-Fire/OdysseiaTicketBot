@@ -14,6 +14,7 @@ from complaint.ui.embeds import (
     build_error_embed,
     build_success_embed,
     build_summon_embed,
+    build_summon_user_embed,
     build_type_select_embed,
 )
 from complaint.ui.modals import ComplaintFormModal
@@ -58,6 +59,8 @@ class EntryView(discord.ui.View):
 # ===== 类型选择 =====
 
 class TypeSelectView(discord.ui.View):
+    """投诉类型下拉选择面板。"""
+
     def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
         super().__init__(timeout=120)
         self.cog = cog
@@ -120,6 +123,22 @@ class ManagePanelView(discord.ui.View):
         )
 
     @discord.ui.button(
+        label="👤 召唤用户",
+        style=discord.ButtonStyle.primary,
+        custom_id="complaint:manage_summon_user",
+        row=0,
+    )
+    async def _btn_summon_user(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin_check(interaction) or not interaction.guild:
+            await interaction.response.send_message("仅管理员可使用此功能。", ephemeral=True)
+            return
+
+        view = SummonUserSelectView(self.cog)
+        await interaction.response.send_message(
+            embed=build_summon_user_embed(), view=view, ephemeral=True,
+        )
+
+    @discord.ui.button(
         label="🗑️ 关闭频道",
         style=discord.ButtonStyle.danger,
         custom_id="complaint:manage_close",
@@ -154,6 +173,8 @@ class ManagePanelView(discord.ui.View):
 # ===== 召唤选择 =====
 
 class SummonSelectView(discord.ui.View):
+    """召唤身份组的下拉选择面板。"""
+
     def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
         super().__init__(timeout=60)
         self.cog = cog
@@ -240,9 +261,79 @@ class SummonSelectView(discord.ui.View):
         )
 
 
+# ===== 召唤用户 =====
+
+class SummonUserSelectView(discord.ui.View):
+    """召唤用户的多选面板。"""
+
+    def __init__(self, cog: ComplaintCog):
+        super().__init__(timeout=60)
+        self.cog = cog
+
+    @discord.ui.user_select(
+        placeholder="选择要召唤的用户...",
+        max_values=10,
+        row=0,
+    )
+    async def _select_users(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.edit_message(view=None)
+            return
+
+        await interaction.response.defer()
+
+        channel = interaction.channel
+        added = []
+        skipped_forbidden = []
+
+        for user in select.values:
+            member = interaction.guild.get_member(user.id)
+            if not member:
+                skipped_forbidden.append(f"<@{user.id}>")
+                continue
+
+            try:
+                await channel.set_permissions(
+                    member,
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    reason=f"召唤用户：{member}",
+                )
+                added.append(member.mention)
+            except discord.Forbidden:
+                skipped_forbidden.append(member.mention)
+
+        if skipped_forbidden:
+            logger.warning("召唤用户时以下用户权限不足: %s", skipped_forbidden)
+
+        if added:
+            await channel.send(
+                f"👤 已召唤用户：{' '.join(added)}",
+                allowed_mentions=discord.AllowedMentions(users=True, everyone=False),
+            )
+
+        parts = []
+        if added:
+            parts.append(f"已成功召唤 {len(added)} 位用户。")
+        if skipped_forbidden:
+            parts.append(f"{len(skipped_forbidden)} 位用户因权限不足跳过。")
+
+        if not parts:
+            parts.append("未选择任何用户。")
+
+        await interaction.edit_original_response(
+            embed=build_success_embed("".join(parts)) if added else build_error_embed("".join(parts)),
+            view=None,
+        )
+
+
 # ===== 二次确认（表单提交前）=====
 
 class ConfirmProceedView(discord.ui.View):
+    """表单提交前的二次确认面板。"""
+
     def __init__(self, cog: ComplaintCog, type_id: str):
         super().__init__(timeout=120)
         self.cog = cog
@@ -283,6 +374,8 @@ class ConfirmProceedView(discord.ui.View):
 # ===== 归档确认 =====
 
 class ArchiveConfirmView(discord.ui.View):
+    """归档确认的持久化 View。"""
+
     def __init__(self, cog: ComplaintCog):
         super().__init__(timeout=None)
         self.cog = cog
@@ -358,6 +451,8 @@ class ArchiveConfirmView(discord.ui.View):
 # ===== 删除频道（持久化）=====
 
 class DeleteChannelView(discord.ui.View):
+    """归档后删除频道的持久化 View。"""
+
     def __init__(self, cog: ComplaintCog):
         super().__init__(timeout=None)
         self.cog = cog
@@ -402,6 +497,8 @@ class DeleteChannelView(discord.ui.View):
 # ===== 删除确认 =====
 
 class DeleteConfirmView(discord.ui.View):
+    """删除频道的倒计时确认面板，5 秒后自动执行删除。"""
+
     def __init__(self, cog: ComplaintCog, channel: discord.TextChannel):
         super().__init__(timeout=60)
         self.cog = cog

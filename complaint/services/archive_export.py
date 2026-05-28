@@ -16,14 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+"""被视为图片的文件扩展名集合。"""
 
 
 def _is_image_filename(name: str) -> bool:
+    """根据文件扩展名判断是否为图片。"""
     name = (name or "").lower()
     return any(name.endswith(ext) for ext in IMAGE_EXTS)
 
 
 def is_image_attachment(att: discord.Attachment) -> bool:
+    """判断附件是否为图片（优先检查 content_type，回退到扩展名）。"""
     ct = (att.content_type or "").lower()
     if ct.startswith("image/"):
         return True
@@ -31,6 +34,7 @@ def is_image_attachment(att: discord.Attachment) -> bool:
 
 
 def sanitize_filename(name: str) -> str:
+    """清理文件名，移除不安全字符。"""
     name = (name or "file").strip()
     name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
     name = name.strip("._")
@@ -38,6 +42,7 @@ def sanitize_filename(name: str) -> str:
 
 
 def fmt_dt(dt: datetime | None) -> str:
+    """格式化 datetime 为可读字符串，None 返回空字符串。"""
     if not dt:
         return ""
     # 参照截图风格：2026/03/22 13:06（Windows 环境不支持 %-m）
@@ -48,6 +53,7 @@ _URL_RE = re.compile(r'(https?://[^\s<>"]+)')
 
 
 def _safe_bytes_to_data_url(mime: str, data: bytes) -> str:
+    """将字节编码为 data URI（base64），用于 HTML 内嵌资源。"""
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
@@ -109,6 +115,8 @@ def render_discord_markdown(text: str) -> str:
 
 @dataclass
 class UserStats:
+    """归档中每用户的统计信息。"""
+
     user_id: int
     display_name: str
     global_name: str | None
@@ -119,6 +127,8 @@ class UserStats:
 
 @dataclass
 class ArchiveBuildResult:
+    """归档构建结果。"""
+
     mode: str  # 'html' | 'zip'
     filename: str
     data: bytes
@@ -132,6 +142,7 @@ def _build_html(
     header_html: str,
     message_blocks: Iterable[str],
 ) -> str:
+    """将标题、头部和消息块组装为完整的 HTML 文档。"""
     css = """
     :root { --bg: #313338; --panel: #2b2d31; --text: #dbdee1; --muted: #949ba4; --link: #00a8fc; }
     body { margin:0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
