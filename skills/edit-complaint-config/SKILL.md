@@ -117,6 +117,10 @@
 | `{type_emoji}` | 投诉类型的 emoji |
 | `{ticket_number}` | 工单编号（数字） |
 
+## 身份组备注
+
+- `super_admin`（超级管理员）对应的是 admin（服务器所有者），拥有全局权限，不需要通过 `target_role_groups` 授予频道访问权限，也不需要添加到 `header_blocks` 的通知列表中。如果确实需要通知 admin，应仿照弹劾类型的写法，在 `header_blocks` 中直接 `@mention` 具体用户（如 `<@724158063984115713>`），而非使用 `{@super_admin}` 宏。
+
 ## 约束
 
 - `form_fields` 最多 5 项（Discord Modal 限制）

@@ -87,6 +87,15 @@ class TypeSelectView(discord.ui.View):
         if not interaction.guild:
             return
         type_id = self._select.values[0]
+
+        self._select.placeholder = "重新选择"
+        for opt in self._select.options:
+            opt.default = (opt.value == type_id)
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.style == discord.ButtonStyle.success:
+                child.disabled = False
+                break
+
         cfg = self.cog.get_config(interaction.guild.id)
         type_config = cfg.get_complaint_type(type_id)
         if not type_config:
@@ -117,7 +126,7 @@ class TypeSelectView(discord.ui.View):
             view=self,
         )
 
-    @discord.ui.button(label="✅ 确认", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="✅ 确认", style=discord.ButtonStyle.success, row=1, disabled=True)
     async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild:
             return
