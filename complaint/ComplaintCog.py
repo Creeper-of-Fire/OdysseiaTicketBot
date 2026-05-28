@@ -300,12 +300,6 @@ class ComplaintCog(FeatureCog):
                 pass
             return
 
-        # --- 在频道内发送计数确认 ---
-        try:
-            await channel.send(f"[投诉计数]已发布{ticket_number}")
-        except Exception:
-            pass
-
         try:
             await followup.send(
                 f"✅ 投诉频道已创建：{channel.mention}（ticket-{ticket_number}）",
