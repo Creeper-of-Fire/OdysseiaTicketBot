@@ -190,6 +190,16 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
             return
 
+        from .config.loader import config_path
+        path = config_path(interaction.guild.id)
+        if path.exists() and len(path.read_text("utf-8")) > 4000:
+            await interaction.response.send_message(
+                "⚠️ 配置文件超过 4000 字符，无法在弹窗中编辑。\n"
+                "请使用 **下载配置** 导出文件，本地编辑后再通过 **上传配置** 提交。",
+                ephemeral=True,
+            )
+            return
+
         from .ui.modals import AdminEditTemplateModal
         modal = AdminEditTemplateModal(self, interaction.guild.id)
         await interaction.response.send_modal(modal)
