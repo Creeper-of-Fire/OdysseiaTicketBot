@@ -31,6 +31,7 @@ class ComplaintArchiveService:
         complainant_id: int,
         form_data: dict[str, str],
         ticket_number: int | None = None,
+        operator: discord.Member | discord.User | None = None,
     ) -> None:
         """归档频道并发送到归档频道（不删除原频道）。
 
@@ -86,14 +87,26 @@ class ComplaintArchiveService:
                 description=f"已从 {channel.mention} 导出为 {result.mode.upper()}。",
                 color=0x2B2D31,
             )
-            summary.add_field(
-                name="投诉人",
-                value=f"<@{complainant_id}> (`{complainant_id}`)",
-                inline=True,
-            )
+            summary.add_field(name="Ticket Owner", value=f"<@{complainant_id}>", inline=True)
+            summary.add_field(name="Ticket Name", value=channel.name, inline=True)
+            category_name = channel.category.name if channel.category else "（无分类）"
+            summary.add_field(name="Panel Name", value=category_name, inline=True)
             summary.add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True)
             if ticket_number:
                 summary.add_field(name="工单编号", value=f"ticket-{ticket_number}", inline=True)
+            if operator:
+                summary.add_field(name="归档人", value=operator.mention, inline=True)
+
+            if result.user_stats:
+                user_lines = []
+                for us in result.user_stats:
+                    name_part = us.global_name or us.name
+                    user_lines.append(f"{us.message_count} - @{us.display_name} - {name_part}#{us.discriminator}")
+                summary.add_field(
+                    name="Users in transcript",
+                    value="\n".join(user_lines)[:1024],
+                    inline=False,
+                )
 
             if form_data:
                 desc_lines = []

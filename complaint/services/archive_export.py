@@ -105,11 +105,22 @@ def render_discord_markdown(text: str) -> str:
 
 
 @dataclass
+class UserStats:
+    user_id: int
+    display_name: str
+    global_name: str | None
+    name: str
+    discriminator: str
+    message_count: int
+
+
+@dataclass
 class ArchiveBuildResult:
     mode: str  # 'html' | 'zip'
     filename: str
     data: bytes
     warnings: list[str]
+    user_stats: list[UserStats]
 
 
 def _build_html(
@@ -209,6 +220,27 @@ async def build_archive(
     messages: list[discord.Message] = []
     async for m in channel.history(limit=None, oldest_first=True):
         messages.append(m)
+
+    # 收集每用户消息计数
+    user_msg_counts: dict[int, int] = {}
+    user_objects: dict[int, discord.abc.User] = {}
+    for m in messages:
+        uid = getattr(m.author, "id", None)
+        if uid is None:
+            continue
+        user_msg_counts[uid] = user_msg_counts.get(uid, 0) + 1
+        user_objects.setdefault(uid, m.author)
+    user_stats_list = [
+        UserStats(
+            user_id=uid,
+            display_name=getattr(user_objects[uid], "display_name", str(user_objects[uid])),
+            global_name=getattr(user_objects[uid], "global_name", None),
+            name=getattr(user_objects[uid], "name", str(user_objects[uid])),
+            discriminator=getattr(user_objects[uid], "discriminator", "0"),
+            message_count=count,
+        )
+        for uid, count in sorted(user_msg_counts.items(), key=lambda x: x[1], reverse=True)
+    ]
 
     # 下载图片附件（Discord attachment），用于离线保存
     images: list[tuple[str, str, bytes]] = []  # (key, mime, data)
@@ -503,7 +535,7 @@ async def build_archive(
         html_inline_bytes = html_inline.encode("utf-8")
 
         if len(html_inline_bytes) <= limit:
-            return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}.html", data=html_inline_bytes, warnings=warnings)
+            return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}.html", data=html_inline_bytes, warnings=warnings, user_stats=user_stats_list)
 
         del html_inline, html_inline_bytes, image_src_inline, avatar_src_inline
     elif images or avatars:
@@ -516,7 +548,7 @@ async def build_archive(
             header_html=header_html,
             message_blocks=build_message_blocks(image_src={}, avatar_src={}),
         )
-        return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings)
+        return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings, user_stats=user_stats_list)
 
     # 超限：ZIP（index.html + assets）
     image_src_assets: dict[str, str] = {key: f"assets/{key}" for key, _, _ in images}
@@ -537,7 +569,7 @@ async def build_archive(
 
     zip_bytes = mem.getvalue()
     if len(zip_bytes) <= limit:
-        return ArchiveBuildResult(mode="zip", filename=f"archive-{channel.id}.zip", data=zip_bytes, warnings=warnings)
+        return ArchiveBuildResult(mode="zip", filename=f"archive-{channel.id}.zip", data=zip_bytes, warnings=warnings, user_stats=user_stats_list)
 
     # 仍超限：降级（不内嵌、不打包图片，仅保留 URL）
     warnings.append("归档文件过大：已降级为仅记录图片 URL（未离线保存）。")

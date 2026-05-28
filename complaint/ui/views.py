@@ -306,6 +306,7 @@ class ArchiveConfirmView(discord.ui.View):
                 complainant_id=meta["complainant"],
                 form_data={},
                 ticket_number=ticket_number,
+                operator=interaction.user,
             )
         except Exception as e:
             await interaction.edit_original_response(
