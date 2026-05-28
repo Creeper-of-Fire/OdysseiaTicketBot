@@ -13,12 +13,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_TICKET_NAME_RE = re.compile(r"^ticket-(\d+)")
+TICKET_PREFIX = "工单"
+
+
+def ticket_display(number: int) -> str:
+    return f"{TICKET_PREFIX}-{number}"
 
 
 def parse_ticket_from_name(channel_name: str) -> int | None:
-    m = _TICKET_NAME_RE.match(channel_name)
-    return int(m.group(1)) if m else None
+    prefix = f"{TICKET_PREFIX}-"
+    if channel_name.startswith(prefix):
+        try:
+            return int(channel_name[len(prefix):])
+        except ValueError:
+            return None
+    return None
 
 
 def sanitize_channel_name(name: str) -> str:
@@ -87,13 +96,13 @@ async def create_complaint_channel(
         else:
             logger.warning("角色 %s 在服务器 %s 中不存在，跳过权限设置", role_id, guild.id)
 
-    channel_name = sanitize_channel_name(f"ticket-{ticket_number}")
+    channel_name = sanitize_channel_name(ticket_display(ticket_number))
 
     channel = await guild.create_text_channel(
         name=channel_name,
         category=category,
         overwrites=overwrites,
-        reason=f"创建投诉频道 ticket-{ticket_number}",
+        reason=f"创建投诉频道 {ticket_display(ticket_number)}",
     )
 
     meta = ComplaintChannelMeta(

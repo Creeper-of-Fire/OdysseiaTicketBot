@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from .archive_export import build_archive
+from .channel_service import ticket_display
 
 if TYPE_CHECKING:
     from complaint.config.models import ComplaintConfig
@@ -67,7 +68,7 @@ class ComplaintArchiveService:
                     guild_filesize_limit=int(guild.filesize_limit),
                     media_budget_bytes=self._media_budget_bytes(),
                     single_image_max_bytes=self._single_image_max_bytes(),
-                    archive_title=f"投诉归档 - {type_label}" + (f" (ticket-{ticket_number})" if ticket_number else ""),
+                    archive_title=f"投诉归档 - {type_label}" + (f" ({ticket_display(ticket_number)})" if ticket_number else ""),
                 )
 
             # Phase 2: 严格验证归档生成结果
@@ -81,7 +82,7 @@ class ComplaintArchiveService:
             # Phase 3: 发送到归档频道
             archive_title = f"{type_emoji} 投诉归档｜{type_label}"
             if ticket_number:
-                archive_title += f" (ticket-{ticket_number})"
+                archive_title += f" ({ticket_display(ticket_number)})"
             summary = discord.Embed(
                 title=archive_title,
                 description=f"已从 {channel.mention} 导出为 {result.mode.upper()}。",
@@ -93,7 +94,7 @@ class ComplaintArchiveService:
             summary.add_field(name="Panel Name", value=category_name, inline=True)
             summary.add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True)
             if ticket_number:
-                summary.add_field(name="工单编号", value=f"ticket-{ticket_number}", inline=True)
+                summary.add_field(name="工单编号", value=ticket_display(ticket_number), inline=True)
             if operator:
                 summary.add_field(name="归档人", value=operator.mention, inline=True)
 
@@ -174,7 +175,7 @@ class ComplaintArchiveService:
             f"频道：{channel.name}（ID：{channel.id}）",
         ]
         if ticket_number:
-            lines.append(f"工单编号：ticket-{ticket_number}")
+            lines.append(f"工单编号：{ticket_display(ticket_number)}")
         lines += [
             f"投诉人：{complainant_id}",
             f"归档时间：{now}",

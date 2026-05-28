@@ -15,7 +15,7 @@ from .config.loader import load_config, read_raw_config, save_config, validate_a
 from .config.models import ComplaintConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
-from .services.channel_service import create_complaint_channel
+from .services.channel_service import create_complaint_channel, ticket_display
 from .services.counter_service import TicketCounterService
 from .ui.embeds import (
     build_archive_confirm_embed,
@@ -297,7 +297,7 @@ class ComplaintCog(FeatureCog):
 
         try:
             await followup.send(
-                f"✅ 投诉频道已创建：{channel.mention}（ticket-{ticket_number}）",
+                f"✅ 投诉频道已创建：{channel.mention}（{ticket_display(ticket_number)}）",
                 ephemeral=True,
             )
         except Exception:
