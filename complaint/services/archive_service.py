@@ -11,6 +11,7 @@ import discord
 
 from .archive_export import build_archive
 from .channel_service import ticket_display
+from utility.message import resolve_sendable, send_message
 
 if TYPE_CHECKING:
     from complaint.config.models import ComplaintConfig
@@ -53,8 +54,10 @@ class ComplaintArchiveService:
         if not archive_channel_id:
             raise RuntimeError("未配置归档频道，请先使用 /投诉管理 配置服务器")
 
-        archive_channel = guild.get_channel(archive_channel_id)
-        if not isinstance(archive_channel, discord.TextChannel):
+        archive_channel = await resolve_sendable(
+            None, guild, archive_channel_id,
+        )
+        if archive_channel is None:
             raise RuntimeError("归档频道不可用")
 
         header_lines = self._build_header_lines(
@@ -138,7 +141,8 @@ class ComplaintArchiveService:
             filename = f"complaint-{channel.id}-archive.{ext}"
             file = discord.File(fp=io.BytesIO(result.data), filename=filename)
 
-            sent_msg = await archive_channel.send(
+            sent_msg = await send_message(
+                archive_channel,
                 embed=summary,
                 file=file,
                 allowed_mentions=discord.AllowedMentions.none(),

@@ -18,6 +18,7 @@ from complaint.ui.embeds import (
     build_type_select_embed,
 )
 from complaint.ui.modals import ComplaintFormModal
+from utility.message import send_message
 from utility.permison import is_admin_check
 
 if TYPE_CHECKING:
@@ -360,8 +361,9 @@ class SummonSelectView(discord.ui.View):
                 role = interaction.guild.get_role(role_id)
                 if role:
                     role_names.append(role.name)
-            await channel.send(
-                f"📢 **{group.label}** 已获权访问本频道（{', '.join(role_names)}）",
+            await send_message(
+                channel,
+                content=f"📢 **{group.label}** 已获权访问本频道（{', '.join(role_names)}）",
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
@@ -473,8 +475,9 @@ class SummonUserSelectView(discord.ui.View):
             logger.warning("召唤用户时以下用户处理失败: %s", skipped)
 
         if added:
-            await channel.send(
-                f"👤 已召唤用户：{' '.join(added)}",
+            await send_message(
+                channel,
+                content=f"👤 已召唤用户：{' '.join(added)}",
                 allowed_mentions=discord.AllowedMentions(users=True, everyone=False),
             )
 

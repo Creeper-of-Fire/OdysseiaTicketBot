@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from complaint.ui.embeds import build_manage_panel_embed
+from utility.message import send_message
 
 if TYPE_CHECKING:
     from complaint.ComplaintCog import ComplaintCog
@@ -127,13 +128,14 @@ async def create_complaint_channel(
         full_config=full_config,
         guild=guild,
     )
-    await channel.send(
+    await send_message(
+        channel,
         content=header_content,
         allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
     )
 
     manage_view = ManagePanelView(cog)
-    await channel.send(embed=build_manage_panel_embed(), view=manage_view)
+    await send_message(channel, embed=build_manage_panel_embed(), view=manage_view)
     cog.bot.add_view(manage_view)
 
     logger.info(
