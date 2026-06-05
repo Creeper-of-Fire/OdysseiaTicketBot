@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import discord
@@ -139,12 +140,19 @@ class ComplaintCog(FeatureCog):
             save_config(cfg, guild_id)
             raw = read_raw_config(guild_id)
 
-        await interaction.response.send_message(
-            "📎 当前服务器的投诉配置文件：",
-            file=discord.File(
+        manual_path = Path(__file__).resolve().parent.parent / "docs" / "投诉系统使用手册.md"
+        files = [
+            discord.File(
                 fp=__import__("io").BytesIO(raw),
                 filename=f"complaint_{guild_id}.toml",
             ),
+        ]
+        if manual_path.is_file():
+            files.append(discord.File(fp=manual_path, filename=manual_path.name))
+
+        await interaction.response.send_message(
+            "📎 当前服务器的投诉配置文件（附使用手册）：",
+            files=files,
             ephemeral=True,
         )
 

@@ -603,6 +603,7 @@ class ArchiveConfirmView(discord.ui.View):
         try:
             archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
                 channel,
+                type_id=meta.type_id if meta else None,
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=complainant_id,

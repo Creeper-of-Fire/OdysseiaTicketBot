@@ -29,6 +29,7 @@ class ComplaintArchiveService:
         self,
         channel: discord.TextChannel,
         *,
+        type_id: str | None = None,
         type_label: str,
         type_emoji: str,
         complainant_id: int,
@@ -40,11 +41,15 @@ class ComplaintArchiveService:
 
         严格保证：归档文件生成且成功发送到归档频道后才返回。
 
+        Args:
+            type_id: 投诉类型 ID。传入后按类型解析归档频道（类型级优先，回退到 guild 级）。
+                     传 None 时直接使用 guild.archive_channel_id。
+
         Returns:
             归档消息的跳转链接。
         """
         guild = channel.guild
-        archive_channel_id = self._config.guild.archive_channel_id
+        archive_channel_id = self._config.get_effective_archive_channel_id(type_id) if type_id else self._config.guild.archive_channel_id
         if not archive_channel_id:
             raise RuntimeError("未配置归档频道，请先使用 /投诉管理 配置服务器")
 

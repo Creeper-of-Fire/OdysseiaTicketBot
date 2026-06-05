@@ -87,6 +87,11 @@
   ]
   ```
 
+- **`category_id`** (`int`，默认 `0`)：该类型专属的工单分类频道 ID。`0` 表示使用 `[guild]` 中的 `category_id`。按类型分流到不同分类下时使用。
+- **`archive_channel_id`** (`int`，默认 `0`)：该类型专属的归档文件发送目标频道 ID。`0` 表示使用 `[guild]` 中的 `archive_channel_id`。按类型将归档分流到不同的归档频道时使用，例如普通投诉归档到普通频道，严重投诉归档到管理组频道。
+
+  > 工单编号计数器始终使用 `[guild].archive_channel_id` 中存储的 `[投诉计数]已发布N` 消息维护，是全服共享的递增序列，不会因 `archive_channel_id` 覆盖而按类型分别计数。
+
 ## 宏
 
 ### `[templates]` 的 `channel_header`

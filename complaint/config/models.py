@@ -46,6 +46,8 @@ class ComplaintTypeConfig(BaseModel):
     notify_message: str = ""
     # 创建工单时使用的分类频道 ID。0 = 使用 guild.category_id。
     category_id: int = 0
+    # 该类型专属的归档文件发送频道 ID。0 = 使用 guild.archive_channel_id。
+    archive_channel_id: int = 0
 
 
 class RoleGroupConfig(BaseModel):
@@ -122,6 +124,13 @@ class ComplaintConfig(BaseModel):
         if t and t.category_id:
             return t.category_id
         return self.guild.category_id
+
+    def get_effective_archive_channel_id(self, type_id: str) -> int:
+        """获取指定类型的有效 archive_channel_id，类型级优先，回退到 guild 级。"""
+        t = self.get_complaint_type(type_id)
+        if t and t.archive_channel_id:
+            return t.archive_channel_id
+        return self.guild.archive_channel_id
 
     def get_all_category_ids(self) -> set[int]:
         """收集所有有效的投诉分类 ID（guild 级 + 各类型自定义级）。"""
