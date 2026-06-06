@@ -34,7 +34,7 @@ COGS = {
     "bottle": {
         "enabled": True,
     },
-    "temp" : {
+    "temp": {
         "enabled": True,
     },
     "complaint": {
@@ -102,6 +102,7 @@ SUPER_ADMIN_USER_IDS: typing.Set[int] = {
 # 例如，可以发送面板、刷新缓存、获取数据备份，但不能删除数据。
 # 注意：这里包含角色ID和特定的用户ID。
 ADMIN_ROLE_IDS: typing.Set[int] = {
+    1289224017789583453,  # Admin
     1337450755791261766,  # 管理组
 }
 

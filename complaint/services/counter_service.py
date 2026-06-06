@@ -5,6 +5,8 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from utility.message import send_message
+
 if TYPE_CHECKING:
     import discord
 
@@ -27,7 +29,7 @@ class TicketCounterService:
     async def get_next_number(
         self,
         guild_id: int,
-        archive_channel: discord.TextChannel,
+        archive_channel: object,
     ) -> int:
         """获取下一个 ticket 编号。
 
@@ -47,7 +49,7 @@ class TicketCounterService:
                     f"请管理员在归档频道中手动发送 [投诉计数]已发布0 以初始化计数。"
                 )
             next_number = latest + 1
-            await archive_channel.send(f"[投诉计数]已发布{next_number}")
+            await send_message(archive_channel, content=f"[投诉计数]已发布{next_number}")
             logger.info(
                 "Ticket counter: %d → %d (guild %s)",
                 latest, next_number, guild_id,

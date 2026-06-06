@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import discord
@@ -11,6 +12,7 @@ from discord.ext import commands
 import config
 from utility.feature_cog import FeatureCog
 from utility.helpers import try_get_member
+from utility.message import resolve_sendable, send_message
 from utility.permison import is_admin
 
 from .config.loader import load_config, read_raw_config, save_config, validate_and_save
@@ -89,7 +91,7 @@ class ComplaintCog(FeatureCog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await target.send(embed=build_entry_embed(), view=EntryView(self))
+            await send_message(target, embed=build_entry_embed(), view=EntryView(self))
         except discord.Forbidden:
             await interaction.edit_original_response(
                 content="没有权限在当前频道发送消息。"
@@ -139,12 +141,19 @@ class ComplaintCog(FeatureCog):
             save_config(cfg, guild_id)
             raw = read_raw_config(guild_id)
 
-        await interaction.response.send_message(
-            "📎 当前服务器的投诉配置文件：",
-            file=discord.File(
+        manual_path = Path(__file__).resolve().parent.parent / "docs" / "投诉系统使用手册.md"
+        files = [
+            discord.File(
                 fp=__import__("io").BytesIO(raw),
                 filename=f"complaint_{guild_id}.toml",
             ),
+        ]
+        if manual_path.is_file():
+            files.append(discord.File(fp=manual_path, filename=manual_path.name))
+
+        await interaction.response.send_message(
+            "📎 当前服务器的投诉配置文件（附使用手册）：",
+            files=files,
             ephemeral=True,
         )
 
@@ -220,7 +229,11 @@ class ComplaintCog(FeatureCog):
             return
 
         manage_view = ManagePanelView(self)
-        await interaction.channel.send(embed=build_manage_panel_embed(), view=manage_view)
+        await send_message(
+            interaction.channel,
+            embed=build_manage_panel_embed(),
+            view=manage_view,
+        )
         self.bot.add_view(manage_view)
         await interaction.response.send_message("✅ 管理面板已重新发送。", ephemeral=True)
 
@@ -303,8 +316,9 @@ class ComplaintCog(FeatureCog):
                 skipped.append(f"{member.mention}（权限不足）")
 
         if added:
-            await channel.send(
-                f"👤 已召唤用户：{' '.join(added)}",
+            await send_message(
+                channel,
+                content=f"👤 已召唤用户：{' '.join(added)}",
                 allowed_mentions=discord.AllowedMentions(users=True, everyone=False),
             )
 
@@ -373,8 +387,10 @@ class ComplaintCog(FeatureCog):
             await followup.send("未配置归档频道，请先使用 /投诉管理 配置服务器。", ephemeral=True)
             return
 
-        archive_channel = interaction.guild.get_channel(archive_channel_id)
-        if not isinstance(archive_channel, discord.TextChannel):
+        archive_channel = await resolve_sendable(
+            self.bot, interaction.guild, archive_channel_id,
+        )
+        if archive_channel is None:
             await followup.send("归档频道不可用，请检查配置。", ephemeral=True)
             return
 
@@ -464,7 +480,8 @@ class ComplaintCog(FeatureCog):
             channel_mention=channel.mention,
             complainant_name=complainant.display_name,
         )
-        await target.send(
+        await send_message(
+            target,
             content=rendered,
             embed=embed,
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),

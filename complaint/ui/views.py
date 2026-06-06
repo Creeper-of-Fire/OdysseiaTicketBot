@@ -22,6 +22,7 @@ from complaint.ui.embeds import (
     build_type_select_embed,
 )
 from complaint.ui.modals import ComplaintFormModal
+from utility.message import send_message
 from utility.permison import is_admin_check
 
 if TYPE_CHECKING:
@@ -298,13 +299,9 @@ class ManagePanelView(discord.ui.View):
             await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
             return
 
-        is_admin_user = is_admin_check(interaction)
-        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
-        is_complainant = meta is not None and interaction.user.id == meta.complainant_id
-
-        if not is_admin_user and not is_complainant:
+        if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅投诉人或管理员可关闭此频道。", ephemeral=True,
+                "仅管理员可关闭此频道。", ephemeral=True,
             )
             return
         cfg = self.cog.get_config(interaction.guild.id)
@@ -437,8 +434,9 @@ class SummonSelectView(discord.ui.View):
                 role = interaction.guild.get_role(role_id)
                 if role:
                     role_names.append(role.name)
-            await channel.send(
-                f"📢 **{group.label}** 已获权访问本频道（{', '.join(role_names)}）",
+            await send_message(
+                channel,
+                content=f"📢 **{group.label}** 已获权访问本频道（{', '.join(role_names)}）",
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
@@ -550,8 +548,9 @@ class SummonUserSelectView(discord.ui.View):
             logger.warning("召唤用户时以下用户处理失败: %s", skipped)
 
         if added:
-            await channel.send(
-                f"👤 已召唤用户：{' '.join(added)}",
+            await send_message(
+                channel,
+                content=f"👤 已召唤用户：{' '.join(added)}",
                 allowed_mentions=discord.AllowedMentions(users=True, everyone=False),
             )
 
@@ -809,14 +808,12 @@ class ArchiveConfirmView(discord.ui.View):
             await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
-        channel = interaction.channel
-        is_admin_user = is_admin_check(interaction)
-        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
-        is_complainant = meta is not None and interaction.user.id == meta.complainant_id
-
-        if not is_admin_user and not is_complainant:
-            await interaction.response.send_message("仅投诉人或管理员可执行此操作。", ephemeral=True)
+        if not is_admin_check(interaction):
+            await interaction.response.send_message("仅管理员可执行此操作。", ephemeral=True)
             return
+
+        channel = interaction.channel
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
 
         await interaction.response.defer()
 
@@ -833,6 +830,7 @@ class ArchiveConfirmView(discord.ui.View):
         try:
             archive_url = await self.cog._get_archive_service(guild_id).generate_and_send_archive(
                 channel,
+                type_id=meta.type_id if meta else None,
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=complainant_id,
@@ -886,13 +884,9 @@ class DeleteChannelView(discord.ui.View):
             await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
-        is_admin_user = is_admin_check(interaction)
-        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
-        is_complainant = meta is not None and interaction.user.id == meta.complainant_id
-
-        if not is_admin_user and not is_complainant:
+        if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅投诉人或管理员可删除此频道。", ephemeral=True,
+                "仅管理员可删除此频道。", ephemeral=True,
             )
             return
 
@@ -930,6 +924,10 @@ class DeleteConfirmView(discord.ui.View):
         row=0,
     )
     async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin_check(interaction):
+            await interaction.response.send_message("仅管理员可执行此操作。", ephemeral=True)
+            return
+
         self.remove_item(button)
         countdown = 5
         await interaction.response.edit_message(
