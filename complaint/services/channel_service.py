@@ -146,6 +146,78 @@ async def create_complaint_channel(
     return channel
 
 
+def get_type_target_role_ids(
+    full_config: "ComplaintConfig",
+    type_config: "ComplaintTypeConfig" | None,
+) -> list[int]:
+    """收集指定投诉类型对应处理组的角色 ID。"""
+    if type_config is None:
+        return []
+    return full_config.get_all_role_ids_for_groups(type_config.target_role_groups)
+
+
+async def transfer_complaint_channel(
+    *,
+    cog: ComplaintCog,
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    operator: discord.abc.User,
+    full_config: "ComplaintConfig",
+    new_type_id: str,
+) -> tuple["ComplaintTypeConfig" | None, "ComplaintTypeConfig"]:
+    """将投诉频道转接到新的投诉类型，并差量更新目标身份组权限。"""
+    meta = cog.channel_manager.get_channel_meta(guild.id, channel.id)
+    if meta is None:
+        raise RuntimeError("当前频道不是投诉频道。")
+
+    old_type = full_config.get_complaint_type(meta.type_id)
+    new_type = full_config.get_complaint_type(new_type_id)
+    if new_type is None:
+        raise RuntimeError("目标投诉类型不存在。")
+    if old_type and old_type.id == new_type.id:
+        raise RuntimeError("当前工单已经属于该投诉类型。")
+
+    old_role_ids = set(get_type_target_role_ids(full_config, old_type))
+    new_role_ids = set(get_type_target_role_ids(full_config, new_type))
+
+    for role_id in sorted(old_role_ids - new_role_ids):
+        role = guild.get_role(role_id)
+        if role is None:
+            logger.warning("转接时旧类型角色 %s 不存在，跳过移除权限", role_id)
+            continue
+        await channel.set_permissions(
+            role,
+            overwrite=None,
+            reason=f"投诉工单转接：移除旧处理组 ({operator})",
+        )
+
+    for role_id in sorted(new_role_ids - old_role_ids):
+        role = guild.get_role(role_id)
+        if role is None:
+            logger.warning("转接时新类型角色 %s 不存在，跳过授予权限", role_id)
+            continue
+        await channel.set_permissions(
+            role,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            reason=f"投诉工单转接：加入新处理组 ({operator})",
+        )
+
+    meta.type_id = new_type.id
+    await cog.channel_manager.save_data()
+
+    logger.info(
+        "投诉频道 %s 已转接: %s -> %s (operator=%s)",
+        channel.id,
+        old_type.id if old_type else "unknown",
+        new_type.id,
+        operator.id,
+    )
+    return old_type, new_type
+
+
 def _render_header(
     *,
     type_config: ComplaintTypeConfig,

@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 import discord
 
 from complaint.config.models import ComplaintConfig
-from complaint.services.channel_service import parse_ticket_from_name
+from complaint.services.channel_service import (
+    get_type_target_role_ids,
+    parse_ticket_from_name,
+    transfer_complaint_channel,
+)
 from complaint.ui.embeds import (
     build_archive_confirm_embed,
     build_archive_success_embed,
@@ -25,6 +29,35 @@ if TYPE_CHECKING:
     from complaint.ComplaintCog import ComplaintCog
 
 logger = logging.getLogger(__name__)
+
+
+def _format_type_name(type_config) -> str:
+    """格式化投诉类型显示名。"""
+    if type_config is None:
+        return "未知类型"
+    prefix = f"{type_config.emoji} " if type_config.emoji else ""
+    return f"{prefix}{type_config.label}"
+
+
+def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -> bool:
+    """检查用户是否属于当前工单类型的处理组。"""
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+    if not isinstance(interaction.channel, discord.TextChannel):
+        return False
+
+    meta = cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+    if meta is None:
+        return False
+
+    cfg = cog.get_config(interaction.guild.id)
+    current_type = cfg.get_complaint_type(meta.type_id)
+    current_role_ids = set(get_type_target_role_ids(cfg, current_type))
+    if not current_role_ids:
+        return False
+
+    user_role_ids = {role.id for role in interaction.user.roles}
+    return not user_role_ids.isdisjoint(current_role_ids)
 
 
 # ===== 入口面板 =====
@@ -209,6 +242,46 @@ class ManagePanelView(discord.ui.View):
         view = SummonUserSelectView(self.cog)
         await interaction.response.send_message(
             embed=build_summon_user_embed(), view=view, ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🔀 转接工单",
+        style=discord.ButtonStyle.secondary,
+        custom_id="complaint:manage_transfer",
+        row=0,
+    )
+    async def _btn_transfer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("请在投诉频道中使用。", ephemeral=True)
+            return
+
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+        if meta is None:
+            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            return
+
+        if not is_admin_check(interaction) and not _is_current_handler(interaction, self.cog):
+            await interaction.response.send_message(
+                "仅当前处理组成员或管理组可转接工单。",
+                ephemeral=True,
+            )
+            return
+
+        cfg = self.cog.get_config(interaction.guild.id)
+        current_type = cfg.get_complaint_type(meta.type_id)
+        view = TransferTypeSelectView(self.cog, cfg, meta.type_id)
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="🔀 转接工单",
+                description=(
+                    f"当前工单类型：**{_format_type_name(current_type)}**\n\n"
+                    "请选择要转接到的投诉类型。\n"
+                    "转接后将移除旧处理组权限，并授予新处理组权限。"
+                ),
+                color=0xFEE75C,
+            ),
+            view=view,
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -520,6 +593,157 @@ class SummonUserSelectView(discord.ui.View):
                 )
         except Exception:
             logger.error("SummonUserSelectView 无法回复交互", exc_info=True)
+
+
+# ===== 转接工单 =====
+
+class TransferTypeSelectView(discord.ui.View):
+    """将当前投诉频道转接到其他投诉类型。"""
+
+    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, current_type_id: str):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.current_type_id = current_type_id
+
+        options = [
+            discord.SelectOption(
+                label=ct.label,
+                value=ct.id,
+                description=ct.description[:100] if ct.description else None,
+                emoji=ct.emoji or None,
+            )
+            for ct in config.types
+            if ct.id != current_type_id
+        ]
+        self._select = discord.ui.Select(
+            placeholder="选择转接目标类型...",
+            options=options or [discord.SelectOption(label="（无可转接类型）", value="none")],
+        )
+        self._select.callback = self._on_select
+        self.add_item(self._select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.edit_message(view=None)
+            return
+
+        selected = self._select.values[0] if self._select.values else None
+        if not selected or selected == "none":
+            await interaction.response.edit_message(view=None)
+            return
+
+        cfg = self.cog.get_config(interaction.guild.id)
+        target_type = cfg.get_complaint_type(selected)
+        if target_type is None:
+            await interaction.response.send_message("目标投诉类型不存在。", ephemeral=True)
+            return
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🔀 确认转接工单",
+                description=(
+                    f"将当前工单转接到：**{_format_type_name(target_type)}**\n\n"
+                    "确认后会移除旧处理组权限，并将新处理组加入当前频道。"
+                ),
+                color=0xFEE75C,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(label="✅ 确认转接", style=discord.ButtonStyle.success, row=1)
+    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.edit_message(view=None)
+            return
+
+        selected = self._select.values[0] if self._select.values else None
+        if not selected or selected == "none":
+            await interaction.response.edit_message(view=None)
+            return
+
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+        if meta is None:
+            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            return
+
+        if not is_admin_check(interaction) and not _is_current_handler(interaction, self.cog):
+            await interaction.response.send_message(
+                "仅当前处理组成员或管理组可转接工单。",
+                ephemeral=True,
+            )
+            return
+
+        cfg = self.cog.get_config(interaction.guild.id)
+        current_type = cfg.get_complaint_type(meta.type_id)
+
+        await interaction.response.defer()
+        try:
+            old_type, new_type = await transfer_complaint_channel(
+                cog=self.cog,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                operator=interaction.user,
+                full_config=cfg,
+                new_type_id=selected,
+            )
+        except RuntimeError as error:
+            await interaction.edit_original_response(
+                embed=build_error_embed(str(error)),
+                view=None,
+            )
+            return
+        except discord.Forbidden:
+            await interaction.edit_original_response(
+                embed=build_error_embed("机器人权限不足，无法调整频道权限。"),
+                view=None,
+            )
+            return
+        except Exception as error:
+            logger.error("转接工单失败: %s", error, exc_info=error)
+            await interaction.edit_original_response(
+                embed=build_error_embed(f"转接失败：{error}"),
+                view=None,
+            )
+            return
+
+        operator_name = getattr(interaction.user, "display_name", interaction.user.name)
+        await interaction.channel.send(
+            f"🔀 工单已由 **{operator_name}** 从 **{_format_type_name(old_type or current_type)}** "
+            f"转接为 **{_format_type_name(new_type)}**。",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        await interaction.edit_original_response(
+            embed=build_success_embed(
+                f"已将工单从 **{_format_type_name(old_type or current_type)}** "
+                f"转接为 **{_format_type_name(new_type)}**。"
+            ),
+            view=None,
+        )
+
+    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
+    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_success_embed("已取消转接工单。"),
+            view=None,
+        )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        logger.error("TransferTypeSelectView 交互错误 (item=%s): %s", item, error, exc_info=error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("操作出错，请重试。", ephemeral=True)
+            else:
+                await interaction.edit_original_response(
+                    embed=build_error_embed(f"操作出错：{error}"),
+                    view=None,
+                )
+        except Exception:
+            logger.error("TransferTypeSelectView 无法回复交互", exc_info=True)
 
 
 # ===== 二次确认（表单提交前）=====
