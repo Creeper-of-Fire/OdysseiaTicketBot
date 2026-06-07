@@ -146,16 +146,6 @@ async def create_complaint_channel(
     return channel
 
 
-def get_type_target_role_ids(
-    full_config: "ComplaintConfig",
-    type_config: "ComplaintTypeConfig" | None,
-) -> list[int]:
-    """收集指定投诉类型对应处理组的角色 ID。"""
-    if type_config is None:
-        return []
-    return full_config.get_all_role_ids_for_groups(type_config.target_role_groups)
-
-
 async def transfer_complaint_channel(
     *,
     cog: ComplaintCog,
@@ -177,8 +167,8 @@ async def transfer_complaint_channel(
     if old_type and old_type.id == new_type.id:
         raise RuntimeError("当前工单已经属于该投诉类型。")
 
-    old_role_ids = set(get_type_target_role_ids(full_config, old_type))
-    new_role_ids = set(get_type_target_role_ids(full_config, new_type))
+    old_role_ids = set(full_config.get_type_target_role_ids(old_type))
+    new_role_ids = set(full_config.get_type_target_role_ids(new_type))
 
     for role_id in sorted(old_role_ids - new_role_ids):
         role = guild.get_role(role_id)

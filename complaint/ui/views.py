@@ -8,7 +8,6 @@ import discord
 
 from complaint.config.models import ComplaintConfig
 from complaint.services.channel_service import (
-    get_type_target_role_ids,
     parse_ticket_from_name,
     transfer_complaint_channel,
 )
@@ -52,7 +51,7 @@ def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -
 
     cfg = cog.get_config(interaction.guild.id)
     current_type = cfg.get_complaint_type(meta.type_id)
-    current_role_ids = set(get_type_target_role_ids(cfg, current_type))
+    current_role_ids = set(cfg.get_type_target_role_ids(current_type))
     if not current_role_ids:
         return False
 
@@ -604,6 +603,7 @@ class TransferTypeSelectView(discord.ui.View):
         super().__init__(timeout=60)
         self.cog = cog
         self.current_type_id = current_type_id
+        self._confirmed = False
 
         options = [
             discord.SelectOption(
@@ -614,7 +614,7 @@ class TransferTypeSelectView(discord.ui.View):
             )
             for ct in config.types
             if ct.id != current_type_id
-        ]
+        ][:25]
         self._select = discord.ui.Select(
             placeholder="选择转接目标类型...",
             options=options or [discord.SelectOption(label="（无可转接类型）", value="none")],
@@ -638,20 +638,54 @@ class TransferTypeSelectView(discord.ui.View):
             await interaction.response.send_message("目标投诉类型不存在。", ephemeral=True)
             return
 
+        # 标记选中项 + 启用确认按钮
+        self._select.placeholder = "重新选择"
+        for opt in self._select.options:
+            opt.default = (opt.value == selected)
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.style == discord.ButtonStyle.success:
+                child.disabled = False
+                break
+
+        # 计算权限变化并显示
+        current_type = cfg.get_complaint_type(self.current_type_id)
+        old_role_ids = set(cfg.get_type_target_role_ids(current_type))
+        new_role_ids = set(cfg.get_type_target_role_ids(target_type))
+        added = new_role_ids - old_role_ids
+        removed = old_role_ids - new_role_ids
+
+        desc_parts = [f"将当前工单转接到：**{_format_type_name(target_type)}**\n"]
+        if added:
+            lines = []
+            for rid in sorted(added):
+                role = interaction.guild.get_role(rid)
+                lines.append(role.mention if role else f"<@&{rid}>")
+            desc_parts.append(f"**新增处理组**：{' '.join(lines)}\n")
+        if removed:
+            lines = []
+            for rid in sorted(removed):
+                role = interaction.guild.get_role(rid)
+                lines.append(role.mention if role else f"<@&{rid}>")
+            desc_parts.append(f"**移除处理组**：{' '.join(lines)}\n")
+        desc_parts.append("\n确认后会移除旧处理组权限，并将新处理组加入当前频道。")
+
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="🔀 确认转接工单",
-                description=(
-                    f"将当前工单转接到：**{_format_type_name(target_type)}**\n\n"
-                    "确认后会移除旧处理组权限，并将新处理组加入当前频道。"
-                ),
+                description="".join(desc_parts),
                 color=0xFEE75C,
             ),
             view=self,
         )
 
-    @discord.ui.button(label="✅ 确认转接", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="✅ 确认转接", style=discord.ButtonStyle.success, row=1, disabled=True)
     async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._confirmed:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            return
+        self._confirmed = True
+
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.edit_message(view=None)
             return
@@ -706,10 +740,16 @@ class TransferTypeSelectView(discord.ui.View):
             )
             return
 
-        operator_name = getattr(interaction.user, "display_name", interaction.user.name)
         await interaction.channel.send(
-            f"🔀 工单已由 **{operator_name}** 从 **{_format_type_name(old_type or current_type)}** "
-            f"转接为 **{_format_type_name(new_type)}**。",
+            embed=discord.Embed(
+                title="🔀 工单转接通知",
+                description=(
+                    f"工单已由 **{interaction.user.display_name}** 转接。\n"
+                    f"**原类型**：{_format_type_name(old_type or current_type)}\n"
+                    f"**新类型**：{_format_type_name(new_type)}"
+                ),
+                color=0xFEE75C,
+            ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
         await interaction.edit_original_response(

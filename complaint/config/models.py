@@ -118,6 +118,12 @@ class ComplaintConfig(BaseModel):
                 result.extend(group.role_ids)
         return list(dict.fromkeys(result))
 
+    def get_type_target_role_ids(self, type_config: ComplaintTypeConfig | None) -> list[int]:
+        """收集指定投诉类型对应处理组的角色 ID。"""
+        if type_config is None:
+            return []
+        return self.get_all_role_ids_for_groups(type_config.target_role_groups)
+
     def get_effective_category_id(self, type_id: str) -> int:
         """获取指定类型的有效 category_id，类型级优先，回退到 guild 级。"""
         t = self.get_complaint_type(type_id)
