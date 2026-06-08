@@ -22,6 +22,7 @@ from complaint.ui.embeds import (
 )
 from complaint.ui.modals import ComplaintFormModal
 from utility.message import send_message
+from utility.paginated_view import PaginatedView
 from utility.permison import is_admin_check
 
 if TYPE_CHECKING:
@@ -84,101 +85,109 @@ class EntryView(discord.ui.View):
             return
 
         view = TypeSelectView(self.cog, cfg)
-        await interaction.response.send_message(
-            embed=build_type_select_embed(cfg), view=view, ephemeral=True,
-        )
+        await view.start(interaction, ephemeral=True)
 
 
 # ===== 类型选择 =====
 
-class TypeSelectView(discord.ui.View):
+class TypeSelectView(PaginatedView):
     """投诉类型选择面板，选完后需确认才弹出表单。"""
 
     def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
-        super().__init__(timeout=120)
+        super().__init__(
+            all_items_provider=lambda: config.types,
+            items_per_page=25,
+            timeout=120,
+        )
         self.cog = cog
         self._config = config
+        self._selected_type_id: str | None = None
 
-        options = [
-            discord.SelectOption(
-                label=ct.label,
-                description=ct.description[:100] if ct.description else None,
-                value=ct.id,
-                emoji=ct.emoji or None,
+    async def _rebuild_view(self):
+        self.clear_items()
+        page_items = self.get_page_items()
+
+        # 类型选择下拉框
+        if page_items:
+            options = [
+                discord.SelectOption(
+                    label=ct.label,
+                    description=ct.description[:100] if ct.description else None,
+                    value=ct.id,
+                    emoji=ct.emoji or None,
+                    default=(ct.id == self._selected_type_id),
+                )
+                for ct in page_items
+            ]
+            self._select = discord.ui.Select(
+                placeholder="重新选择" if self._selected_type_id else "选择投诉类型...",
+                options=options,
             )
-            for ct in config.types
-        ]
+            self._select.callback = self._on_select
+            self.add_item(self._select)
 
-        self._select = discord.ui.Select(
-            placeholder="选择投诉类型...",
-            options=options,
+        # 确认按钮
+        confirm_btn = discord.ui.Button(
+            label="✅ 确认", style=discord.ButtonStyle.success, row=1,
+            disabled=not self._selected_type_id,
         )
-        self._select.callback = self._on_select
-        self.add_item(self._select)
+        confirm_btn.callback = self._on_confirm
+        self.add_item(confirm_btn)
+
+        # 取消按钮
+        cancel_btn = discord.ui.Button(
+            label="❌ 取消", style=discord.ButtonStyle.secondary, row=1,
+        )
+        cancel_btn.callback = self._on_cancel
+        self.add_item(cancel_btn)
+
+        self._add_pagination_buttons(row=2)
+
+        # Embed
+        if self._selected_type_id:
+            type_config = self._config.get_complaint_type(self._selected_type_id)
+            if type_config:
+                group_labels = []
+                for gid in type_config.target_role_groups:
+                    group = self._config.role_groups.get(gid)
+                    if group:
+                        group_labels.append(group.label)
+                groups_text = "、".join(group_labels) if group_labels else "无"
+                detail = type_config.description
+                if type_config.detail_description:
+                    detail += f"\n\n{type_config.detail_description}"
+                self.embed = discord.Embed(
+                    title=f"{type_config.emoji} {type_config.label}",
+                    description=(
+                        f"{detail}\n\n"
+                        f"**可见管理组**：{groups_text}\n\n"
+                        "点击 **确认** 开始填写投诉表单。"
+                    ),
+                    color=0xFEE75C,
+                )
+                return
+        self.embed = build_type_select_embed(self._config)
 
     async def _on_select(self, interaction: discord.Interaction):
+        if self._select.values:
+            self._selected_type_id = self._select.values[0]
+        await self.update_view(interaction)
+
+    async def _on_confirm(self, interaction: discord.Interaction):
         if not interaction.guild:
             return
-        type_id = self._select.values[0]
-
-        self._select.placeholder = "重新选择"
-        for opt in self._select.options:
-            opt.default = (opt.value == type_id)
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.style == discord.ButtonStyle.success:
-                child.disabled = False
-                break
-
-        cfg = self.cog.get_config(interaction.guild.id)
-        type_config = cfg.get_complaint_type(type_id)
-        if not type_config:
-            await interaction.response.send_message("投诉类型不存在。", ephemeral=True)
-            return
-
-        group_labels = []
-        for gid in type_config.target_role_groups:
-            group = cfg.role_groups.get(gid)
-            if group:
-                group_labels.append(group.label)
-        groups_text = "、".join(group_labels) if group_labels else "无"
-
-        detail = type_config.description
-        if type_config.detail_description:
-            detail += f"\n\n{type_config.detail_description}"
-
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title=f"{type_config.emoji} {type_config.label}",
-                description=(
-                    f"{detail}\n\n"
-                    f"**可见管理组**：{groups_text}\n\n"
-                    "点击 **确认** 开始填写投诉表单。"
-                ),
-                color=0xFEE75C,
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(label="✅ 确认", style=discord.ButtonStyle.success, row=1, disabled=True)
-    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.guild:
-            return
-        type_id = self._select.values[0] if self._select.values else None
-        if not type_id:
+        if not self._selected_type_id:
             await interaction.response.edit_message(view=None)
             return
-
         cfg = self.cog.get_config(interaction.guild.id)
-        type_config = cfg.get_complaint_type(type_id)
+        type_config = cfg.get_complaint_type(self._selected_type_id)
         if not type_config:
             await interaction.response.send_message("投诉类型不存在，请重新选择。", ephemeral=True)
             return
-
         modal = ComplaintFormModal(self.cog, type_config)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _on_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
             embed=build_success_embed("已取消选择。"), view=None,
         )
@@ -223,9 +232,7 @@ class ManagePanelView(discord.ui.View):
 
         cfg = self.cog.get_config(interaction.guild.id)
         view = SummonSelectView(self.cog, cfg, interaction.guild)
-        await interaction.response.send_message(
-            embed=build_summon_embed(), view=view, ephemeral=True,
-        )
+        await view.start(interaction, ephemeral=True)
 
     @discord.ui.button(
         label="👤 召唤用户",
@@ -267,21 +274,8 @@ class ManagePanelView(discord.ui.View):
             return
 
         cfg = self.cog.get_config(interaction.guild.id)
-        current_type = cfg.get_complaint_type(meta.type_id)
-        view = TransferTypeSelectView(self.cog, cfg, meta.type_id)
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="🔀 转接工单",
-                description=(
-                    f"当前工单类型：**{_format_type_name(current_type)}**\n\n"
-                    "请选择要转接到的投诉类型。\n"
-                    "转接后将移除旧处理组权限，并授予新处理组权限。"
-                ),
-                color=0xFEE75C,
-            ),
-            view=view,
-            ephemeral=True,
-        )
+        view = TransferTypeSelectView(self.cog, cfg, meta.type_id, interaction.guild)
+        await view.start(interaction, ephemeral=True)
 
     @discord.ui.button(
         label="🗑️ 关闭频道",
@@ -315,85 +309,98 @@ class ManagePanelView(discord.ui.View):
 
 # ===== 召唤选择 =====
 
-class SummonSelectView(discord.ui.View):
+class SummonSelectView(PaginatedView):
     """召唤身份组的两步确认面板。"""
 
     def __init__(self, cog: ComplaintCog, config: ComplaintConfig, guild: discord.Guild):
-        super().__init__(timeout=60)
-        self.cog = cog
-
-        options = []
-        for group_id, rg in config.role_groups.items():
-            if not rg.role_ids:
-                continue
-            role_names = []
-            for rid in rg.role_ids:
-                role = guild.get_role(rid)
-                role_names.append(role.name if role else f"（未知角色 {rid}）")
-            desc = "、".join(role_names)
-            options.append(discord.SelectOption(
-                label=rg.label,
-                value=group_id,
-                description=desc[:100],
-            ))
-
-        self._select = discord.ui.Select(
-            placeholder="选择要召唤的身份组...",
-            options=options or [discord.SelectOption(label="（无可用身份组）", value="none")],
+        super().__init__(
+            all_items_provider=lambda: [
+                (gid, rg) for gid, rg in config.role_groups.items() if rg.role_ids
+            ],
+            items_per_page=25,
+            timeout=60,
         )
-        self._select.callback = self._on_select
-        self.add_item(self._select)
+        self.cog = cog
+        self._config = config
+        self._guild = guild
+        self._selected_group_id: str | None = None
+
+    async def _rebuild_view(self):
+        self.clear_items()
+        page_items = self.get_page_items()
+
+        if page_items:
+            options = []
+            for group_id, rg in page_items:
+                role_names = []
+                for rid in rg.role_ids:
+                    role = self._guild.get_role(rid)
+                    role_names.append(role.name if role else f"（未知角色 {rid}）")
+                desc = "、".join(role_names)
+                options.append(discord.SelectOption(
+                    label=rg.label,
+                    value=group_id,
+                    description=desc[:100],
+                    default=(group_id == self._selected_group_id),
+                ))
+            self._select = discord.ui.Select(
+                placeholder="重新选择" if self._selected_group_id else "选择要召唤的身份组...",
+                options=options,
+            )
+            self._select.callback = self._on_select
+            self.add_item(self._select)
+
+        confirm_btn = discord.ui.Button(
+            label="✅ 确认召唤", style=discord.ButtonStyle.success, row=1,
+            disabled=not self._selected_group_id,
+        )
+        confirm_btn.callback = self._on_confirm
+        self.add_item(confirm_btn)
+
+        cancel_btn = discord.ui.Button(
+            label="❌ 取消", style=discord.ButtonStyle.secondary, row=1,
+        )
+        cancel_btn.callback = self._on_cancel
+        self.add_item(cancel_btn)
+
+        self._add_pagination_buttons(row=2)
+
+        # Embed
+        if self._selected_group_id:
+            group = self._config.role_groups.get(self._selected_group_id)
+            if group:
+                role_lines = []
+                for rid in group.role_ids:
+                    role = self._guild.get_role(rid)
+                    role_lines.append(f"- {role.mention}" if role else f"- ~~未知角色 <@&{rid}>~~")
+                roles_text = "\n".join(role_lines)
+                self.embed = discord.Embed(
+                    title=f"📢 召唤 **{group.label}**",
+                    description=(
+                        f"以下角色将被添加到频道并发送通知：\n\n"
+                        f"{roles_text}\n\n"
+                        "点击 **确认召唤** 完成操作。"
+                    ),
+                    color=0xFEE75C,
+                )
+                return
+        self.embed = build_summon_embed()
 
     async def _on_select(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.edit_message(view=None)
-            return
+        if self._select.values and self._select.values[0] != "none":
+            self._selected_group_id = self._select.values[0]
+        await self.update_view(interaction)
 
-        values = self._select.values
-        if not values or values[0] == "none":
-            await interaction.response.edit_message(view=None)
-            return
-
-        group_id = values[0]
-        cfg = self.cog.get_config(interaction.guild.id)
-        group = cfg.role_groups.get(group_id)
-        if not group:
-            await interaction.response.send_message("身份组不存在。", ephemeral=True)
-            return
-
-        role_lines = []
-        for rid in group.role_ids:
-            role = interaction.guild.get_role(rid)
-            role_lines.append(f"- {role.mention}" if role else f"- ~~未知角色 <@&{rid}>~~")
-        roles_text = "\n".join(role_lines)
-
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title=f"📢 召唤 **{group.label}**",
-                description=(
-                    f"以下角色将被添加到频道并发送通知：\n\n"
-                    f"{roles_text}\n\n"
-                    "点击 **确认召唤** 完成操作。"
-                ),
-                color=0xFEE75C,
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(label="✅ 确认召唤", style=discord.ButtonStyle.success, row=1)
-    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _on_confirm(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.edit_message(view=None)
             return
-
-        values = self._select.values
-        if not values or values[0] == "none":
+        if not self._selected_group_id:
             await interaction.response.edit_message(view=None)
             return
 
-        group_id = values[0]
         cfg = self.cog.get_config(interaction.guild.id)
-        group = cfg.role_groups.get(group_id)
+        group = cfg.role_groups.get(self._selected_group_id)
         if not group:
             await interaction.response.send_message("身份组不存在。", ephemeral=True)
             return
@@ -446,7 +453,6 @@ class SummonSelectView(discord.ui.View):
             parts.append(f"{len(skipped_missing)} 个角色已不存在。")
         if skipped_forbidden:
             parts.append(f"{len(skipped_forbidden)} 个角色因权限不足跳过。")
-
         if not parts:
             parts.append("身份组中没有可用的角色。")
 
@@ -455,8 +461,7 @@ class SummonSelectView(discord.ui.View):
             view=None,
         )
 
-    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _on_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
             embed=build_success_embed("已取消召唤身份组。"), view=None,
         )
@@ -596,90 +601,109 @@ class SummonUserSelectView(discord.ui.View):
 
 # ===== 转接工单 =====
 
-class TransferTypeSelectView(discord.ui.View):
+class TransferTypeSelectView(PaginatedView):
     """将当前投诉频道转接到其他投诉类型。"""
 
-    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, current_type_id: str):
-        super().__init__(timeout=60)
+    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, current_type_id: str, guild: discord.Guild):
+        super().__init__(
+            all_items_provider=lambda: [
+                ct for ct in config.types if ct.id != current_type_id
+            ],
+            items_per_page=25,
+            timeout=60,
+        )
         self.cog = cog
+        self._config = config
         self.current_type_id = current_type_id
+        self._guild = guild
+        self._selected_type_id: str | None = None
         self._confirmed = False
 
-        options = [
-            discord.SelectOption(
-                label=ct.label,
-                value=ct.id,
-                description=ct.description[:100] if ct.description else None,
-                emoji=ct.emoji or None,
+    async def _rebuild_view(self):
+        self.clear_items()
+        page_items = self.get_page_items()
+
+        if page_items:
+            options = [
+                discord.SelectOption(
+                    label=ct.label,
+                    value=ct.id,
+                    description=ct.description[:100] if ct.description else None,
+                    emoji=ct.emoji or None,
+                    default=(ct.id == self._selected_type_id),
+                )
+                for ct in page_items
+            ]
+            self._select = discord.ui.Select(
+                placeholder="重新选择" if self._selected_type_id else "选择转接目标类型...",
+                options=options,
             )
-            for ct in config.types
-            if ct.id != current_type_id
-        ][:25]
-        self._select = discord.ui.Select(
-            placeholder="选择转接目标类型...",
-            options=options or [discord.SelectOption(label="（无可转接类型）", value="none")],
+            self._select.callback = self._on_select
+            self.add_item(self._select)
+
+        confirm_btn = discord.ui.Button(
+            label="✅ 确认转接", style=discord.ButtonStyle.success, row=1,
+            disabled=not self._selected_type_id,
         )
-        self._select.callback = self._on_select
-        self.add_item(self._select)
+        confirm_btn.callback = self._on_confirm
+        self.add_item(confirm_btn)
+
+        cancel_btn = discord.ui.Button(
+            label="❌ 取消", style=discord.ButtonStyle.secondary, row=1,
+        )
+        cancel_btn.callback = self._on_cancel
+        self.add_item(cancel_btn)
+
+        self._add_pagination_buttons(row=2)
+
+        # Embed
+        if self._selected_type_id:
+            target_type = self._config.get_complaint_type(self._selected_type_id)
+            if target_type:
+                current_type = self._config.get_complaint_type(self.current_type_id)
+                old_role_ids = set(self._config.get_type_target_role_ids(current_type))
+                new_role_ids = set(self._config.get_type_target_role_ids(target_type))
+                added = new_role_ids - old_role_ids
+                removed = old_role_ids - new_role_ids
+
+                desc_parts = [f"将当前工单转接到：**{_format_type_name(target_type)}**\n"]
+                if added:
+                    lines = []
+                    for rid in sorted(added):
+                        role = self._guild.get_role(rid)
+                        lines.append(role.mention if role else f"<@&{rid}>")
+                    desc_parts.append(f"**新增处理组**：{' '.join(lines)}\n")
+                if removed:
+                    lines = []
+                    for rid in sorted(removed):
+                        role = self._guild.get_role(rid)
+                        lines.append(role.mention if role else f"<@&{rid}>")
+                    desc_parts.append(f"**移除处理组**：{' '.join(lines)}\n")
+                desc_parts.append("\n确认后会移除旧处理组权限，并将新处理组加入当前频道。")
+                self.embed = discord.Embed(
+                    title="🔀 确认转接工单",
+                    description="".join(desc_parts),
+                    color=0xFEE75C,
+                )
+                return
+
+        current_type = self._config.get_complaint_type(self.current_type_id)
+        self.embed = discord.Embed(
+            title="🔀 转接工单",
+            description=(
+                f"当前工单类型：**{_format_type_name(current_type)}**\n\n"
+                "请选择要转接到的投诉类型。\n"
+                "转接后将移除旧处理组权限，并授予新处理组权限。"
+            ),
+            color=0xFEE75C,
+        )
 
     async def _on_select(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.edit_message(view=None)
-            return
+        if self._select.values:
+            self._selected_type_id = self._select.values[0]
+        await self.update_view(interaction)
 
-        selected = self._select.values[0] if self._select.values else None
-        if not selected or selected == "none":
-            await interaction.response.edit_message(view=None)
-            return
-
-        cfg = self.cog.get_config(interaction.guild.id)
-        target_type = cfg.get_complaint_type(selected)
-        if target_type is None:
-            await interaction.response.send_message("目标投诉类型不存在。", ephemeral=True)
-            return
-
-        # 标记选中项 + 启用确认按钮
-        self._select.placeholder = "重新选择"
-        for opt in self._select.options:
-            opt.default = (opt.value == selected)
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.style == discord.ButtonStyle.success:
-                child.disabled = False
-                break
-
-        # 计算权限变化并显示
-        current_type = cfg.get_complaint_type(self.current_type_id)
-        old_role_ids = set(cfg.get_type_target_role_ids(current_type))
-        new_role_ids = set(cfg.get_type_target_role_ids(target_type))
-        added = new_role_ids - old_role_ids
-        removed = old_role_ids - new_role_ids
-
-        desc_parts = [f"将当前工单转接到：**{_format_type_name(target_type)}**\n"]
-        if added:
-            lines = []
-            for rid in sorted(added):
-                role = interaction.guild.get_role(rid)
-                lines.append(role.mention if role else f"<@&{rid}>")
-            desc_parts.append(f"**新增处理组**：{' '.join(lines)}\n")
-        if removed:
-            lines = []
-            for rid in sorted(removed):
-                role = interaction.guild.get_role(rid)
-                lines.append(role.mention if role else f"<@&{rid}>")
-            desc_parts.append(f"**移除处理组**：{' '.join(lines)}\n")
-        desc_parts.append("\n确认后会移除旧处理组权限，并将新处理组加入当前频道。")
-
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title="🔀 确认转接工单",
-                description="".join(desc_parts),
-                color=0xFEE75C,
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(label="✅ 确认转接", style=discord.ButtonStyle.success, row=1, disabled=True)
-    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _on_confirm(self, interaction: discord.Interaction):
         if self._confirmed:
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=True)
@@ -690,8 +714,7 @@ class TransferTypeSelectView(discord.ui.View):
             await interaction.response.edit_message(view=None)
             return
 
-        selected = self._select.values[0] if self._select.values else None
-        if not selected or selected == "none":
+        if not self._selected_type_id:
             await interaction.response.edit_message(view=None)
             return
 
@@ -718,7 +741,7 @@ class TransferTypeSelectView(discord.ui.View):
                 channel=interaction.channel,
                 operator=interaction.user,
                 full_config=cfg,
-                new_type_id=selected,
+                new_type_id=self._selected_type_id,
             )
         except RuntimeError as error:
             await interaction.edit_original_response(
@@ -760,8 +783,7 @@ class TransferTypeSelectView(discord.ui.View):
             view=None,
         )
 
-    @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary, row=1)
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _on_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
             embed=build_success_embed("已取消转接工单。"),
             view=None,
