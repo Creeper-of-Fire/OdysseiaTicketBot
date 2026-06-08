@@ -9,18 +9,21 @@ import discord
 from complaint.config.models import ComplaintConfig
 from complaint.services.channel_service import (
     parse_ticket_from_name,
+    render_notify_message,
     transfer_complaint_channel,
 )
 from complaint.ui.embeds import (
     build_archive_confirm_embed,
     build_archive_success_embed,
     build_error_embed,
+    build_notify_embed,
     build_success_embed,
     build_summon_embed,
     build_summon_user_embed,
     build_type_select_embed,
 )
 from complaint.ui.modals import ComplaintFormModal
+from utility.helpers import try_get_member
 from utility.message import send_message
 from utility.paginated_view import PaginatedView
 from utility.permison import is_admin_check
@@ -290,6 +293,11 @@ class ManagePanelView(discord.ui.View):
 
         if not interaction.guild:
             await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            return
+
+        meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
+        if meta is None:
+            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
             return
 
         if not is_admin_check(interaction):
@@ -775,6 +783,41 @@ class TransferTypeSelectView(PaginatedView):
             ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
+
+        # 向新类型的通知频道发送转接通知
+        if new_type.notify_channel_id and new_type.notify_message:
+            try:
+                ticket_number = parse_ticket_from_name(interaction.channel.name)
+                complainant = await try_get_member(interaction.guild, meta.complainant_id)
+                if complainant and ticket_number is not None:
+                    notify_content = render_notify_message(
+                        notify_message=new_type.notify_message,
+                        full_config=cfg,
+                        guild=interaction.guild,
+                        type_config=new_type,
+                        ticket_number=ticket_number,
+                        complainant=complainant,
+                        channel=interaction.channel,
+                    )
+                    notify_target = interaction.guild.get_channel(new_type.notify_channel_id)
+                    if notify_target is None:
+                        notify_target = await interaction.guild.fetch_channel(new_type.notify_channel_id)
+                    if isinstance(notify_target, (discord.TextChannel, discord.Thread)):
+                        await send_message(
+                            notify_target,
+                            content=notify_content,
+                            embed=build_notify_embed(
+                                type_label=new_type.label,
+                                type_emoji=new_type.emoji,
+                                ticket_number=ticket_number,
+                                channel_mention=interaction.channel.mention,
+                                complainant_name=complainant.display_name,
+                            ),
+                            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
+                        )
+            except Exception:
+                logger.warning("转接工单 %s 通知发送失败", self._selected_type_id, exc_info=True)
+
         await interaction.edit_original_response(
             embed=build_success_embed(
                 f"已将工单从 **{_format_type_name(old_type or current_type)}** "
@@ -813,10 +856,14 @@ class TransferTypeSelectView(PaginatedView):
 class ConfirmProceedView(discord.ui.View):
     """表单提交前的二次确认面板。"""
 
-    def __init__(self, cog: ComplaintCog, type_id: str):
+    def __init__(self, cog: ComplaintCog, type_id: str, user_id: int):
         super().__init__(timeout=120)
         self.cog = cog
         self.type_id = type_id
+        self._user_id = user_id
+
+    async def on_timeout(self):
+        self.cog._pending_forms.pop((self._user_id, self.type_id), None)
 
     @discord.ui.button(
         label="✅ 确认提交",
@@ -845,6 +892,7 @@ class ConfirmProceedView(discord.ui.View):
         row=0,
     )
     async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.cog._pending_forms.pop((self._user_id, self.type_id), None)
         await interaction.response.edit_message(
             embed=build_success_embed("已取消提交。"), view=None,
         )
@@ -896,7 +944,7 @@ class ArchiveConfirmView(discord.ui.View):
                 type_label=type_label,
                 type_emoji=type_emoji,
                 complainant_id=complainant_id,
-                form_data={},
+                form_data=meta.form_data if meta else {},
                 ticket_number=ticket_number,
                 operator=interaction.user,
             )

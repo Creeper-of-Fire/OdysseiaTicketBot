@@ -352,7 +352,7 @@ class ComplaintCog(FeatureCog):
         if type_config.requires_confirm:
             self._pending_forms[(interaction.user.id, type_config.id)] = form_data
             embed = build_confirm_embed(type_config)
-            view = ConfirmProceedView(self, type_config.id)
+            view = ConfirmProceedView(self, type_config.id, interaction.user.id)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
             await self._do_create_channel(interaction, type_config, form_data)

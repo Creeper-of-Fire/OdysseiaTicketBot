@@ -115,6 +115,7 @@ async def create_complaint_channel(
     meta = ComplaintChannelMeta(
         complainant_id=complainant.id,
         type_id=type_config.id,
+        form_data=form_data,
     )
     cog.channel_manager.register_channel(guild.id, channel.id, meta)
     await cog.channel_manager.save_data()

@@ -10,6 +10,7 @@ class ComplaintChannelMeta(BaseModel):
 
     complainant_id: int
     type_id: str
+    form_data: dict[str, str] = {}
 
 
 class GuildComplaintData(BaseModel):

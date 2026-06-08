@@ -621,4 +621,4 @@ async def build_archive(
         header_html=header_html,
         message_blocks=build_message_blocks(image_src={}, avatar_src={}),
     )
-    return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings)
+    return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings, user_stats=user_stats_list)
