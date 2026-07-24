@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     一键SSH连接到TicketBot的ECS服务器并获取日志。
 
@@ -15,6 +15,13 @@
     2. 你的Windows系统已安装 OpenSSH 客户端 (Windows 10/11 通常内置)。
     3. 如果首次运行此脚本，可能需要调整PowerShell的执行策略。
 #>
+
+# --- 参数 ---
+# 不传 -Lines 时：实时跟踪（docker logs -f）
+# 传 -Lines N 时：只拉最近 N 行后退出（docker logs --tail N）
+param(
+    [int]$Lines = 0
+)
 
 # --- 脚本配置 ---
 $ErrorActionPreference = "Stop" # 遇到任何错误就停止脚本
