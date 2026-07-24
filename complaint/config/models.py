@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from complaint.services.channel_service import TICKET_PREFIX
+from shared.config.toml_merge import TomlMergeAsTableList
 
 
 class FormFieldConfig(BaseModel):
@@ -94,7 +95,7 @@ class ComplaintConfig(BaseModel):
     guild: GuildConfig = GuildConfig()
     templates: TemplateConfig = TemplateConfig()
     role_groups: dict[str, RoleGroupConfig] = {}
-    types: list[ComplaintTypeConfig] = []
+    types: Annotated[list[ComplaintTypeConfig], TomlMergeAsTableList()] = []
 
     model_config = {"populate_by_name": True}
 

@@ -7,15 +7,18 @@ from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 
 import config
+from shared.config.toml_command import (
+    handle_toml_download,
+    handle_toml_upload,
+    handle_toml_view_hash,
+)
+from shared.config.toml_manager import TomlConfigManager
 from utility.feature_cog import FeatureCog
 from utility.helpers import try_get_member
 from utility.message import resolve_sendable, send_message
 from utility.permison import is_admin
-
-from .config.loader import load_config, read_raw_config, save_config, validate_and_save
 from .config.models import ComplaintConfig, ComplaintTypeConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
@@ -30,7 +33,6 @@ from .ui.embeds import (
     build_notify_embed,
     build_success_embed,
 )
-from .ui.modals import ComplaintFormModal
 from .ui.views import ArchiveConfirmView, ConfirmProceedView, DeleteChannelView, EntryView, ManagePanelView
 
 if TYPE_CHECKING:
@@ -49,6 +51,15 @@ class ComplaintCog(FeatureCog):
         self._pending_forms: dict[tuple[int, str], dict[str, str]] = {}
         self._counter_service = TicketCounterService()
         self.channel_manager = ComplaintChannelManager.get_instance()
+
+        # 配置管理：使用 _shared/ 通用 toml_manager + handler
+        self.manager = TomlConfigManager(
+            data_dir=Path("data"),
+            filename_pattern="complaint_{guild_id}.toml",
+            model_class=ComplaintConfig,
+            doc_path=Path("docs") / "投诉系统使用手册.md",
+        )
+
         bot.add_view(EntryView(self))
         bot.add_view(ArchiveConfirmView(self))
         bot.add_view(DeleteChannelView(self))
@@ -58,7 +69,7 @@ class ComplaintCog(FeatureCog):
     def get_config(self, guild_id: int) -> ComplaintConfig:
         """按 guild_id 获取配置（延迟加载 + 缓存）。"""
         if guild_id not in self._configs:
-            self._configs[guild_id] = load_config(guild_id)
+            self._configs[guild_id] = self.manager.load(guild_id)
             self._archive_services[guild_id] = ComplaintArchiveService(self._configs[guild_id])
         return self._configs[guild_id]
 
@@ -127,94 +138,60 @@ class ComplaintCog(FeatureCog):
             ephemeral=True,
         )
 
-    @complaint_group.command(name="下载配置", description="下载当前服务器的投诉系统 TOML 配置文件")
+    @complaint_group.command(
+        name="下载配置",
+        description="下载 toml + doc + 当前 sha256（请妥善保管 .sha256 用于上传校验）",
+    )
     @is_admin()
     async def cmd_download_config(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
-            return
-
-        guild_id = interaction.guild.id
-        raw = read_raw_config(guild_id)
-        if raw is None:
-            cfg = self.get_config(guild_id)
-            save_config(cfg, guild_id)
-            raw = read_raw_config(guild_id)
-
-        manual_path = Path(__file__).resolve().parent.parent / "docs" / "投诉系统使用手册.md"
-        files = [
-            discord.File(
-                fp=__import__("io").BytesIO(raw),
-                filename=f"complaint_{guild_id}.toml",
-            ),
-        ]
-        if manual_path.is_file():
-            files.append(discord.File(fp=manual_path, filename=manual_path.name))
-
-        await interaction.response.send_message(
-            "📎 当前服务器的投诉配置文件（附使用手册）：",
-            files=files,
-            ephemeral=True,
+        await handle_toml_download(
+            interaction,
+            manager=self.manager,
+            label="complaint",
+            permission_check=None,  # is_admin() 装饰器已检查
         )
 
-    @complaint_group.command(name="上传配置", description="上传新的 TOML 配置文件覆盖当前配置")
+    @complaint_group.command(
+        name="上传配置",
+        description="上传修改后的 toml；本地有配置时必须输入 SHA-256（前 12 字符足够）",
+    )
     @app_commands.rename(config_file="配置文件")
-    @app_commands.describe(config_file="上传编辑后的 TOML 配置文件")
+    @app_commands.describe(
+        config_file="上传编辑后的 TOML 配置文件",
+        hash_str="SHA-256 校验值（前 12 字符足够，完整也可以）；首次上传可省",
+    )
     @is_admin()
     async def cmd_upload_config(
-        self,
-        interaction: discord.Interaction,
-        config_file: discord.Attachment,
+            self,
+            interaction: discord.Interaction,
+            config_file: discord.Attachment,
+            hash_str: str | None = None,
     ):
-        if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
-            return
-
-        guild_id = interaction.guild.id
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            raw_bytes = await config_file.read()
-        except Exception as e:
-            await interaction.edit_original_response(
-                embed=build_error_embed(f"读取文件失败：{e}")
-            )
-            return
-
-        try:
-            cfg = validate_and_save(raw_bytes, guild_id)
-        except Exception as e:
-            await interaction.edit_original_response(
-                embed=build_error_embed(f"配置验证失败：\n{e}")
-            )
-            return
-
-        self._invalidate_config(guild_id)
-        await interaction.edit_original_response(
-            content=f"✅ 配置已更新并生效。{len(cfg.types)} 个投诉类型，"
-                    f"{len(cfg.role_groups)} 个身份组。"
+        guild_id = interaction.guild.id if interaction.guild else 0
+        await handle_toml_upload(
+            interaction,
+            manager=self.manager,
+            toml_file=config_file,
+            hash_str=hash_str,
+            label="complaint",
+            permission_check=None,
         )
+        # 上传成功后失效缓存（让下次访问重新读文件）
+        if guild_id:
+            self._invalidate_config(guild_id)
 
-    @complaint_group.command(name="编辑模板", description="编辑投诉频道的初始消息模板")
+    @complaint_group.command(
+        name="查看配置哈希",
+        description="查看当前 toml 的 SHA-256（上传时用来防止覆盖别人版本）",
+    )
     @is_admin()
-    async def cmd_edit_template(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
-            return
-
-        from .config.loader import config_path
-        path = config_path(interaction.guild.id)
-        if path.exists() and len(path.read_text("utf-8")) > 4000:
-            await interaction.response.send_message(
-                "⚠️ 配置文件超过 4000 字符，无法在弹窗中编辑。\n"
-                "请使用 **下载配置** 导出文件，本地编辑后再通过 **上传配置** 提交。",
-                ephemeral=True,
-            )
-            return
-
-        from .ui.modals import AdminEditTemplateModal
-        modal = AdminEditTemplateModal(self, interaction.guild.id)
-        await interaction.response.send_modal(modal)
+    async def cmd_view_hash(self, interaction: discord.Interaction):
+        await handle_toml_view_hash(
+            interaction,
+            manager=self.manager,
+            label="complaint",
+            permission_check=None,
+        )
 
     @complaint_group.command(name="重发管理面板", description="在当前投诉频道重新发送管理面板")
     @is_admin()
@@ -338,11 +315,11 @@ class ComplaintCog(FeatureCog):
     # ================= 表单 & 频道创建 =================
 
     async def handle_form_submit(
-        self,
-        interaction: discord.Interaction,
-        *,
-        type_config: ComplaintTypeConfig | None,
-        form_data: dict[str, str],
+            self,
+            interaction: discord.Interaction,
+            *,
+            type_config: ComplaintTypeConfig | None,
+            form_data: dict[str, str],
     ) -> None:
         """处理表单提交：需要确认的类型走确认流程，否则直接创建频道。"""
         if type_config is None:
@@ -358,10 +335,10 @@ class ComplaintCog(FeatureCog):
             await self._do_create_channel(interaction, type_config, form_data)
 
     async def _do_create_channel(
-        self,
-        interaction: discord.Interaction,
-        type_config: ComplaintTypeConfig,
-        form_data: dict[str, str],
+            self,
+            interaction: discord.Interaction,
+            type_config: ComplaintTypeConfig,
+            form_data: dict[str, str],
     ) -> None:
         """执行投诉频道创建：分配工单编号、创建频道、发送初始消息。"""
         if not interaction.guild:
@@ -444,14 +421,14 @@ class ComplaintCog(FeatureCog):
             self.logger.warning("投诉频道 %s 已创建，但通知用户失败", channel.id)
 
     async def _send_creation_notify(
-        self,
-        *,
-        guild: discord.Guild,
-        type_config: ComplaintTypeConfig,
-        full_config: ComplaintConfig,
-        ticket_number: int,
-        complainant: discord.Member,
-        channel: discord.TextChannel,
+            self,
+            *,
+            guild: discord.Guild,
+            type_config: ComplaintTypeConfig,
+            full_config: ComplaintConfig,
+            ticket_number: int,
+            complainant: discord.Member,
+            channel: discord.TextChannel,
     ) -> None:
         """工单创建后向配置的频道/帖子发送通知。"""
         target = self.bot.get_channel(type_config.notify_channel_id)

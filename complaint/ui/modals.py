@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 import discord
 
-from complaint.config.loader import config_path, validate_and_save
 from complaint.config.models import ComplaintTypeConfig
 
 if TYPE_CHECKING:
@@ -56,44 +55,4 @@ class ComplaintFormModal(discord.ui.Modal):
             interaction,
             type_config=self.type_config,
             form_data=form_data,
-        )
-
-
-class AdminEditTemplateModal(discord.ui.Modal):
-    """编辑完整投诉系统 TOML 配置。"""
-
-    def __init__(self, cog: ComplaintCog, guild_id: int):
-        self.cog = cog
-        self.guild_id = guild_id
-        super().__init__(title="编辑投诉配置", timeout=600)
-
-        path = config_path(guild_id)
-        raw = path.read_text("utf-8") if path.exists() else ""
-
-        self._toml_input = discord.ui.TextInput(
-            label="TOML 配置",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            max_length=4000,
-            default=raw,
-        )
-        self.add_item(self._toml_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        """验证并保存编辑后的 TOML 配置。"""
-        try:
-            cfg = validate_and_save(
-                self._toml_input.value.encode("utf-8"), self.guild_id
-            )
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ 配置验证失败：\n{e}", ephemeral=True
-            )
-            return
-
-        self.cog._invalidate_config(self.guild_id)
-        await interaction.response.send_message(
-            f"✅ 配置已更新并生效。{len(cfg.types)} 个投诉类型，"
-            f"{len(cfg.role_groups)} 个身份组。",
-            ephemeral=True,
         )
