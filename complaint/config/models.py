@@ -18,6 +18,18 @@ class FormFieldConfig(BaseModel):
     required: bool = True
 
 
+class AutoFillFromLinkConfig(BaseModel):
+    """【PR1新增】链接自动填充配置：提交后从链接读取内容补齐留空字段。
+
+    link_field 存放 Discord 消息/帖子链接；title_field / author_field
+    为留空时自动填充的表单字段（帖子→标题+楼主；消息→首行+作者）。
+    """
+
+    link_field: str
+    title_field: str = ""
+    author_field: str = ""
+
+
 class ComplaintTypeConfig(BaseModel):
     """投诉类型配置，定义一种投诉类型的表单、权限组等。"""
 
@@ -35,6 +47,15 @@ class ComplaintTypeConfig(BaseModel):
     requires_confirm: bool = False
     target_role_groups: list[str] = []
     form_fields: list[FormFieldConfig] = []
+    # 【PR1新增】创建工单时，从这些表单字段的值中解析用户提及/ID 并自动授予频道权限。
+    auto_summon_form_fields: list[str] = []
+    # 【PR1新增】提交后从链接自动读取并填充留空字段（如提案标题/提案人）。
+    auto_fill_from_link: AutoFillFromLinkConfig | None = None
+    # 【PR1新增】限制可创建本类型工单的身份组 ID；空 = 所有人可创建。
+    creator_role_ids: list[int] = []
+    # 【PR1新增】类型级频道首条消息模板覆盖；空 = 回退 guild 级 templates.channel_header。
+    # 支持宏：全部现有宏 + {form:字段key} → 对应表单字段的值。
+    header_template: str = ""
     # 自定义通知块，每条一行，渲染到频道 header 末尾。
     # 支持宏：{@group_id} → 对应身份组的角色 mention，
     # {type_label}、{type_emoji}、{ticket_number} → 投诉类型信息。
@@ -138,6 +159,13 @@ class ComplaintConfig(BaseModel):
         if t and t.archive_channel_id:
             return t.archive_channel_id
         return self.guild.archive_channel_id
+
+    def get_effective_header_template(self, type_id: str) -> str:
+        """【PR1新增】获取指定类型的首条消息模板，类型级优先，回退到 guild 级。"""
+        t = self.get_complaint_type(type_id)
+        if t and t.header_template:
+            return t.header_template
+        return self.templates.channel_header
 
     def get_all_category_ids(self) -> set[int]:
         """收集所有有效的投诉分类 ID（guild 级 + 各类型自定义级）。"""
