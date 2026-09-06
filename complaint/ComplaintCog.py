@@ -22,7 +22,12 @@ from utility.permison import is_admin
 from .config.models import ComplaintConfig, ComplaintTypeConfig
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
-from .services.channel_service import create_complaint_channel, render_notify_message, ticket_display
+from .services.channel_service import (
+    create_complaint_channel,
+    render_notify_message,
+    resolve_proposal_link,
+    ticket_display,
+)
 from .services.counter_service import TicketCounterService
 from .ui.embeds import (
     build_archive_confirm_embed,
@@ -357,6 +362,24 @@ class ComplaintCog(FeatureCog):
             followup = interaction.followup
 
         cfg = self.get_config(interaction.guild.id)
+
+        # 【PR1新增】链接自动填充：配置了 auto_fill_from_link 的类型，
+        # 留空的标题/提案人字段从提案链接读取（本服务器链接才可读取）。
+        af = type_config.auto_fill_from_link
+        if af is not None:
+            form_data = dict(form_data or {})
+            link = (form_data.get(af.link_field) or "").strip()
+            if link:
+                need_title = bool(af.title_field) and not (form_data.get(af.title_field) or "").strip()
+                need_author = bool(af.author_field) and not (form_data.get(af.author_field) or "").strip()
+                if need_title or need_author:
+                    auto_title, auto_author = await resolve_proposal_link(
+                        self.bot, interaction.guild, link,
+                    )
+                    if need_title and auto_title:
+                        form_data[af.title_field] = auto_title
+                    if need_author and auto_author:
+                        form_data[af.author_field] = auto_author
 
         # --- 获取 ticket 编号 ---
         archive_channel_id = cfg.guild.archive_channel_id

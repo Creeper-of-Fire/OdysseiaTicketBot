@@ -63,6 +63,16 @@ def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -
     return not user_role_ids.isdisjoint(current_role_ids)
 
 
+def _can_create_type(interaction: discord.Interaction, type_config) -> bool:
+    """【PR1新增】检查用户是否可创建该类型工单（creator_role_ids 限制）。"""
+    if not type_config or not type_config.creator_role_ids:
+        return True  # 未配置限制 = 所有人可创建
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    user_role_ids = {role.id for role in interaction.user.roles}
+    return not user_role_ids.isdisjoint(set(type_config.creator_role_ids))
+
+
 # ===== 入口面板 =====
 
 class EntryView(discord.ui.View):
@@ -105,10 +115,30 @@ class TypeSelectView(PaginatedView):
         self.cog = cog
         self._config = config
         self._selected_type_id: str | None = None
+        # 【PR1新增】当前用户可用的身份组集合，start 时记录，用于 creator_role_ids 过滤
+        self._creation_allowed_ids: set[int] | None = None
+
+    async def start(self, interaction: discord.Interaction, **kwargs):
+        """【PR1新增】重写 start 以捕获创建者角色集合。"""
+        if (
+            isinstance(interaction.user, discord.Member)
+            and interaction.guild is not None
+        ):
+            self._creation_allowed_ids = {role.id for role in interaction.user.roles}
+        else:
+            self._creation_allowed_ids = None
+        await super().start(interaction, **kwargs)
 
     async def _rebuild_view(self):
         self.clear_items()
-        page_items = self.get_page_items()
+        # 【PR1新增】creator_role_ids 过滤：仅显示当前用户可创建的类型
+        allowed_ids = self._creation_allowed_ids
+        page_items = [
+            ct for ct in self.get_page_items()
+            if not getattr(ct, "creator_role_ids", None)
+            or allowed_ids is None
+            or not allowed_ids.isdisjoint(set(ct.creator_role_ids))
+        ]
 
         # 类型选择下拉框
         if page_items:
@@ -186,6 +216,12 @@ class TypeSelectView(PaginatedView):
         type_config = cfg.get_complaint_type(self._selected_type_id)
         if not type_config:
             await interaction.response.send_message("投诉类型不存在，请重新选择。", ephemeral=True)
+            return
+        # 【PR1新增】creator_role_ids 二次校验（防止下拉选项过期后越权提交）
+        if not _can_create_type(interaction, type_config):
+            await interaction.response.send_message(
+                "你没有权限创建该类型的工单。", ephemeral=True,
+            )
             return
         modal = ComplaintFormModal(self.cog, type_config)
         await interaction.response.send_modal(modal)
