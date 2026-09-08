@@ -372,14 +372,16 @@ class ComplaintCog(FeatureCog):
             return
 
         try:
-            ticket_number = await self._counter_service.get_next_number(
+            reserved = await self._counter_service.reserve_number(
                 interaction.guild.id, archive_channel,
             )
         except RuntimeError as e:
             await followup.send(str(e), ephemeral=True)
             return
+        ticket_number = reserved.number
 
         # --- 创建频道 ---
+        channel: discord.TextChannel | None = None
         try:
             channel = await create_complaint_channel(
                 cog=self,
@@ -392,6 +394,15 @@ class ComplaintCog(FeatureCog):
             )
         except Exception as e:
             self.logger.error("创建投诉频道失败: %s", e, exc_info=True)
+            # 回滚占号：删除计数消息，编号可复用；同时删除可能已建出的频道和注册的元数据。
+            await self._counter_service.release(reserved)
+            if channel is not None:
+                self.channel_manager.remove_channel(interaction.guild.id, channel.id)
+                await self.channel_manager.save_data()
+                try:
+                    await channel.delete(reason="投诉频道创建失败，回滚")
+                except Exception:
+                    self.logger.warning("回滚投诉频道 %s 失败", channel.id, exc_info=True)
             try:
                 await followup.send(f"创建频道失败：{e}", ephemeral=True)
             except Exception:

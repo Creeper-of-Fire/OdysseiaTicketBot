@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from utility.message import send_message
@@ -16,6 +17,14 @@ COUNT_PATTERN = re.compile(r"\[投诉计数\]已发布(\d+)")
 SCAN_LIMIT = 100
 
 
+@dataclass(slots=True)
+class ReservedTicketNumber:
+    """一次占号的结果：编号 + 对应的计数消息（回滚时删除它即可释放编号）。"""
+
+    number: int
+    message: discord.Message
+
+
 class TicketCounterService:
     """基于归档频道消息的并发安全 ticket 计数器。
 
@@ -26,19 +35,21 @@ class TicketCounterService:
     def __init__(self) -> None:
         self._locks: dict[int, asyncio.Lock] = {}
 
-    async def get_next_number(
+    async def reserve_number(
         self,
         guild_id: int,
         archive_channel: object,
-    ) -> int:
-        """获取下一个 ticket 编号。
+    ) -> ReservedTicketNumber:
+        """占号：扫描归档频道取最大计数，发送新计数消息原子占号。
 
         1. 获取 guild 级锁
         2. 扫描归档频道最近 N 条消息，找最新计数
         3. 如果没找到 → 报错
         4. 计算 next = max + 1
         5. 发新计数消息到归档频道（原子占号）
-        6. 返回 next
+
+        占号后若工单创建失败，调用 release() 删除计数消息即可回滚
+        （计数按历史消息取 max，删除后编号自然可复用）。
         """
         async with self._get_lock(guild_id):
             latest = await self._scan_for_latest(archive_channel)
@@ -49,12 +60,27 @@ class TicketCounterService:
                     f"请管理员在归档频道中手动发送 [投诉计数]已发布0 以初始化计数。"
                 )
             next_number = latest + 1
-            await send_message(archive_channel, content=f"[投诉计数]已发布{next_number}")
+            message = await send_message(archive_channel, content=f"[投诉计数]已发布{next_number}")
             logger.info(
                 "Ticket counter: %d → %d (guild %s)",
                 latest, next_number, guild_id,
             )
-            return next_number
+            return ReservedTicketNumber(number=next_number, message=message)
+
+    @staticmethod
+    async def release(reserved: ReservedTicketNumber) -> None:
+        """回滚占号：删除计数消息，使编号可被复用。尽力而为，失败只告警。"""
+        try:
+            await reserved.message.delete()
+            logger.warning(
+                "回滚工单编号 %s 成功",
+                reserved.number
+            )
+        except Exception:
+            logger.warning(
+                "回滚工单编号 %s 失败：无法删除计数消息（编号将被跳过）",
+                reserved.number, exc_info=True,
+            )
 
     def _get_lock(self, guild_id: int) -> asyncio.Lock:
         """获取指定服务器的异步锁（按需创建）。"""
