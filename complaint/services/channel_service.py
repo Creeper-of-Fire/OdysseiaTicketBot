@@ -19,6 +19,96 @@ logger = logging.getLogger(__name__)
 TICKET_PREFIX = "工单"
 """工单编号前缀，用于频道名和显示文本。"""
 
+# 工单频道权限覆盖中使用的全部权限。Discord 规定：bot 不能在权限覆盖中写入
+# 它自己没有的权限（否则整个请求 403），所以操作前先与 BOT 实际权限比对。
+OVERWRITE_PERMS_USED = frozenset(
+    {"view_channel", "send_messages", "read_message_history", "attach_files",
+     "manage_channels", "manage_permissions", "pin_messages"}
+)
+# 关键权限：BOT 缺失则工单流程根本不可用，直接报错拒绝；清单里其余权限缺失时
+# 从覆盖中剥除并降级——包括 @everyone 的拒绝项（如 BOT 没有「标注消息」或
+# 「管理权限」，写了 manage_permissions=False 也过不了 Discord 的归属校验，
+# 且其他成员更不会有该权限，拒绝项没有意义）。
+CRITICAL_OVERWRITE_PERMS = frozenset(
+    {"view_channel", "send_messages", "read_message_history", "attach_files", "manage_channels"}
+)
+
+
+def collect_overwrite_perm_names(
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
+) -> list[str]:
+    """从覆盖对象本身提取全部用到的权限名（允许 + 拒绝并集）。
+
+    同一 bit 的别名（如 manage_permissions/manage_roles）只保留一个，
+    且优先使用 OVERWRITE_PERMS_USED 里的规范名；出现清单之外的 bit 也一并报告。
+    """
+    used = 0
+    for overwrite in overwrites.values():
+        allow, deny = overwrite.pair()
+        used |= allow.value | deny.value
+
+    bit_by_name = discord.Permissions.VALID_FLAGS
+    canonical_bits = {bit_by_name[name] for name in OVERWRITE_PERMS_USED}
+    names: list[str] = []
+    seen_bits: set[int] = set()
+    # 第一遍：清单内 bit 用规范名
+    for name in OVERWRITE_PERMS_USED:
+        bit = bit_by_name[name]
+        if used & bit:
+            names.append(name)
+            seen_bits.add(bit)
+    # 第二遍：清单外的 bit 也提取出来（防常量清单与实际覆盖脱节）
+    for name, bit in bit_by_name.items():
+        if used & bit and bit not in seen_bits:
+            names.append(name)
+            seen_bits.add(bit)
+    return names
+
+
+def build_permission_gap_report(
+    guild: discord.Guild,
+    category: discord.CategoryChannel,
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
+) -> str:
+    """生成 403 诊断报告：逐权限比对 BOT 的服务器级/分类级持有情况。"""
+    names = collect_overwrite_perm_names(overwrites)
+    guild_perms = guild.me.guild_permissions
+    ctx_perms = category.permissions_for(guild.me)
+    lines = ["Discord 拒绝创建工单频道（403 Missing Permissions）。逐项比对 BOT 权限："]
+    for name in names:
+        lines.append(
+            f"  {name}: 服务器级={'有' if getattr(guild_perms, name) else '无'}"
+            f" / 分类级={'有' if getattr(ctx_perms, name) else '无'}"
+        )
+    return "\n".join(lines)
+
+
+def check_bot_permissions(context: discord.abc.GuildChannel) -> frozenset[str]:
+    """比对 BOT 在 context（分类频道/工单频道）的有效权限与覆盖所需权限。
+
+    关键权限缺失 → RuntimeError（含缺失清单，便于定位服务器设置问题）；
+    非关键权限缺失 → 告警并作为缺失集返回，由调用方从覆盖/参数中剥除。
+    创建路径传分类频道（建频道时 Discord 按 category 权限校验），
+    转接路径传工单频道本身，两条路径共用本守卫。
+    """
+    bot_perms = context.permissions_for(context.guild.me)
+    missing = {perm for perm in OVERWRITE_PERMS_USED if not getattr(bot_perms, perm)}
+
+    critical_missing = sorted(missing & CRITICAL_OVERWRITE_PERMS)
+    if critical_missing:
+        raise RuntimeError(
+            "BOT 缺少关键权限：" + "、".join(critical_missing) +
+            "，无法操作工单频道。请在服务器设置中为 BOT 角色勾选对应权限。"
+        )
+
+    missing -= CRITICAL_OVERWRITE_PERMS
+    if missing:
+        logger.warning(
+            "BOT 在服务器 %s 缺少非关键权限 %s，工单相关功能降级",
+            context.guild.id, sorted(missing),
+        )
+    return frozenset(missing)
+
 
 def ticket_display(number: int) -> str:
     """将编号格式化为显示用的工单标识（如 "工单-1"）。"""
@@ -66,6 +156,7 @@ async def create_complaint_channel(
         raise RuntimeError("投诉分类频道不可用")
 
     target_role_ids = full_config.get_all_role_ids_for_groups(type_config.target_role_groups)
+    pin_role_ids = set(full_config.get_type_pin_role_ids(type_config))
 
     overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] = {
         guild.default_role: discord.PermissionOverwrite(
@@ -82,6 +173,7 @@ async def create_complaint_channel(
         manage_channels=True,
         read_message_history=True,
         attach_files=True,
+        pin_messages=True,
     )
 
     overwrites[complainant] = discord.PermissionOverwrite(
@@ -99,18 +191,53 @@ async def create_complaint_channel(
                 send_messages=True,
                 read_message_history=True,
                 attach_files=True,
+                pin_messages=role.id in pin_role_ids,
             )
         else:
             logger.warning("角色 %s 在服务器 %s 中不存在，跳过权限设置", role_id, guild.id)
 
+    missing_perms = check_bot_permissions(category)
+    for overwrite in overwrites.values():
+        for perm in missing_perms:
+            setattr(overwrite, perm, None)
+
     channel_name = sanitize_channel_name(ticket_display(ticket_number))
 
-    channel = await guild.create_text_channel(
-        name=channel_name,
-        category=category,
-        overwrites=overwrites,
-        reason=f"创建投诉频道 {ticket_display(ticket_number)}",
-    )
+    try:
+        channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites,
+            reason=f"创建投诉频道 {ticket_display(ticket_number)}",
+        )
+    except discord.Forbidden as e:
+        # Discord 的 50013 不会指明缺哪个权限，用逐项比对报告替代裸报错。
+        raise RuntimeError(build_permission_gap_report(guild, category, overwrites)) from e
+
+    # 权限收紧放在建频道之后：创建 payload 里完全不含 manage_permissions
+    #（@everyone 拒绝项与 BOT 成员允许项都是），绕开创建时带覆盖的校验问题。
+    # 效果：持有服务器级管理身份组权限的普通成员无法编辑工单频道的权限覆盖
+    # （管理员/服主无视覆盖，无法也无需封锁）。
+    try:
+        # 1. BOT 成员覆盖补回「管理权限」：成员覆盖优先于下一步的 @everyone 拒绝，
+        #    保证转接差量更新仍可用 set_permissions。
+        await channel.set_permissions(
+            bot_member,
+            manage_permissions=True,
+            reason=f"投诉频道权限收紧 ({ticket_display(ticket_number)})",
+        )
+        # 2. 对 @everyone 收紧。
+        await channel.set_permissions(
+            guild.default_role,
+            manage_permissions=False,
+            manage_channels=False,
+            reason=f"投诉频道权限收紧 ({ticket_display(ticket_number)})",
+        )
+    except discord.Forbidden:
+        logger.warning(
+            "工单频道 %s 权限收紧失败（BOT 缺少管理权限），频道保持默认权限",
+            channel.id, exc_info=True,
+        )
 
     meta = ComplaintChannelMeta(
         complainant_id=complainant.id,
@@ -170,6 +297,11 @@ async def transfer_complaint_channel(
 
     old_role_ids = set(full_config.get_type_target_role_ids(old_type))
     new_role_ids = set(full_config.get_type_target_role_ids(new_type))
+    old_pin_ids = set(full_config.get_type_pin_role_ids(old_type))
+    new_pin_ids = set(full_config.get_type_pin_role_ids(new_type))
+
+    # 与创建路径共用同一守卫：缺失的非关键权限从差量参数中剥除，避免整个转接 403。
+    missing_perms = check_bot_permissions(channel)
 
     for role_id in sorted(old_role_ids - new_role_ids):
         role = guild.get_role(role_id)
@@ -187,14 +319,33 @@ async def transfer_complaint_channel(
         if role is None:
             logger.warning("转接时新类型角色 %s 不存在，跳过授予权限", role_id)
             continue
+        pin_kwargs: dict[str, bool] = (
+            {} if "pin_messages" in missing_perms
+            else {"pin_messages": role_id in new_pin_ids}
+        )
         await channel.set_permissions(
             role,
             view_channel=True,
             send_messages=True,
             read_message_history=True,
             attach_files=True,
+            **pin_kwargs,
             reason=f"投诉工单转接：加入新处理组 ({operator})",
         )
+
+    # 同时属于新旧类型的角色：基础权限不变，仅按新旧类型的标注权差异差量更新。
+    if "pin_messages" not in missing_perms:
+        for role_id in sorted(old_role_ids & new_role_ids):
+            if (role_id in old_pin_ids) == (role_id in new_pin_ids):
+                continue
+            role = guild.get_role(role_id)
+            if role is None:
+                continue
+            await channel.set_permissions(
+                role,
+                pin_messages=role_id in new_pin_ids,
+                reason=f"投诉工单转接：同步标注权 ({operator})",
+            )
 
     meta.type_id = new_type.id
     await cog.channel_manager.save_data()
