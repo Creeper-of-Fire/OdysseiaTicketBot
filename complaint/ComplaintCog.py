@@ -320,19 +320,29 @@ class ComplaintCog(FeatureCog):
             *,
             type_config: ComplaintTypeConfig | None,
             form_data: dict[str, str],
+            cfg: ComplaintConfig | None = None,
     ) -> None:
-        """处理表单提交：需要确认的类型走确认流程，否则直接创建频道。"""
+        """处理表单提交：所有类型统一走二次确认，再创建频道。
+
+        二次确认让用户在填完表单后有"反悔"的机会——之前 per-type 的
+        requires_confirm 字段导致部分类型直接跳到创建，体验不一致。
+        """
         if type_config is None:
             await interaction.response.send_message("内部错误：投诉类型丢失。", ephemeral=True)
             return
 
-        if type_config.requires_confirm:
-            self._pending_forms[(interaction.user.id, type_config.id)] = form_data
-            embed = build_confirm_embed(type_config)
-            view = ConfirmProceedView(self, type_config.id, interaction.user.id)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        else:
-            await self._do_create_channel(interaction, type_config, form_data)
+        # modal 没传 cfg 时按需补取（防御性，正常路径 modal 已传）。
+        if cfg is None and interaction.guild:
+            cfg = self.get_config(interaction.guild.id)
+        if cfg is None:
+            await interaction.response.send_message(
+                "内部错误：配置丢失。", ephemeral=True,
+            )
+            return
+        self._pending_forms[(interaction.user.id, type_config.id)] = form_data
+        embed = build_confirm_embed(cfg, type_config)
+        view = ConfirmProceedView(self, type_config.id, interaction.user.id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _do_create_channel(
             self,

@@ -51,8 +51,15 @@ class ComplaintFormModal(discord.ui.Modal):
                     form_data[key] = item.value or ""
                     break
 
+        # 二次确认需要拿完整 config（target_role_groups → label 拼接），不在 modal 里现取一次。
+        cfg = (
+            self.cog.get_config(interaction.guild.id)
+            if interaction.guild else None
+        )
+
         await self.cog.handle_form_submit(
             interaction,
             type_config=self.type_config,
             form_data=form_data,
+            cfg=cfg,
         )

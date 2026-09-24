@@ -63,6 +63,19 @@ def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -
     return not user_role_ids.isdisjoint(current_role_ids)
 
 
+def _can_handle_ticket(interaction: discord.Interaction, cog: "ComplaintCog") -> bool:
+    """全局管理员或当前工单处理组都能动工单按钮。
+
+    在主面板频道(非工单 channel)调用时,只有全局 admin 能用——_is_current_handler
+    自动返回 False,符合"主面板召唤按钮 = admin 专属"的语义。
+    """
+    if is_admin_check(interaction):
+        return True
+    if interaction.guild and interaction.channel:
+        return _is_current_handler(interaction, cog)
+    return False
+
+
 # ===== 入口面板 =====
 
 class EntryView(discord.ui.View):
@@ -229,8 +242,11 @@ class ManagePanelView(discord.ui.View):
         row=0,
     )
     async def _btn_summon(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin_check(interaction) or not interaction.guild:
-            await interaction.response.send_message("仅管理员可使用此功能。", ephemeral=True)
+        # 召唤身份组威力太大——临时收回放权，仅 admin 可用。
+        if not is_admin_check(interaction):
+            await interaction.response.send_message(
+                "仅管理员可使用此功能。", ephemeral=True,
+            )
             return
 
         cfg = self.cog.get_config(interaction.guild.id)
@@ -244,8 +260,10 @@ class ManagePanelView(discord.ui.View):
         row=0,
     )
     async def _btn_summon_user(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin_check(interaction) or not interaction.guild:
-            await interaction.response.send_message("仅管理员可使用此功能。", ephemeral=True)
+        if not _can_handle_ticket(interaction, self.cog):
+            await interaction.response.send_message(
+                "仅管理员或当前工单处理组可使用此功能。", ephemeral=True,
+            )
             return
 
         view = SummonUserSelectView(self.cog)
@@ -269,9 +287,9 @@ class ManagePanelView(discord.ui.View):
             await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
             return
 
-        if not is_admin_check(interaction) and not _is_current_handler(interaction, self.cog):
+        if not _can_handle_ticket(interaction, self.cog):
             await interaction.response.send_message(
-                "仅当前处理组成员或管理组可转接工单。",
+                "仅管理员或当前工单处理组可转接工单。",
                 ephemeral=True,
             )
             return
@@ -300,6 +318,7 @@ class ManagePanelView(discord.ui.View):
             await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
             return
 
+        # 关闭工单临时收回放权，仅 admin 可用——观察运作中是否会出现痛点。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
                 "仅管理员可关闭此频道。", ephemeral=True,
@@ -731,9 +750,9 @@ class TransferTypeSelectView(PaginatedView):
             await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
             return
 
-        if not is_admin_check(interaction) and not _is_current_handler(interaction, self.cog):
+        if not _can_handle_ticket(interaction, self.cog):
             await interaction.response.send_message(
-                "仅当前处理组成员或管理组可转接工单。",
+                "仅管理员或当前工单处理组可处理此工单。",
                 ephemeral=True,
             )
             return
@@ -918,8 +937,11 @@ class ArchiveConfirmView(discord.ui.View):
             await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
+        # 归档流程统一 admin 专属（与「关闭频道」保持一致）——避免 handler 跳过 admin 启动直接确认。
         if not is_admin_check(interaction):
-            await interaction.response.send_message("仅管理员可执行此操作。", ephemeral=True)
+            await interaction.response.send_message(
+                "仅管理员可执行此操作。", ephemeral=True,
+            )
             return
 
         channel = interaction.channel
@@ -994,6 +1016,7 @@ class DeleteChannelView(discord.ui.View):
             await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
             return
 
+        # 归档流程统一 admin 专属（与「关闭频道」保持一致）。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
                 "仅管理员可删除此频道。", ephemeral=True,
@@ -1034,8 +1057,11 @@ class DeleteConfirmView(discord.ui.View):
         row=0,
     )
     async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 归档流程统一 admin 专属（与「关闭频道」保持一致）。
         if not is_admin_check(interaction):
-            await interaction.response.send_message("仅管理员可执行此操作。", ephemeral=True)
+            await interaction.response.send_message(
+                "仅管理员可执行此操作。", ephemeral=True,
+            )
             return
 
         self.remove_item(button)

@@ -32,7 +32,6 @@ class ComplaintTypeConfig(BaseModel):
     @classmethod
     def _trim_detail(cls, v: str) -> str:
         return v.strip() if isinstance(v, str) else v
-    requires_confirm: bool = False
     target_role_groups: list[str] = []
     # 标注权：target_role_groups 中哪些组在工单频道获得「标注消息」权限
     # （PIN_MESSAGES，2025-08 从管理消息拆分出的独立权限）。引用 role_groups 的组 ID。
@@ -52,6 +51,9 @@ class ComplaintTypeConfig(BaseModel):
     category_id: int = 0
     # 该类型专属的归档文件发送频道 ID。0 = 使用 guild.archive_channel_id。
     archive_channel_id: int = 0
+    # 二次确认的责任/敏感提示文案，覆盖 templates.default_responsibility_notice。
+    # 留空则回退到 templates 级别默认，仍为空则使用 embeds 模块的 Python 兜底。
+    responsibility_notice: str = ""
 
 
 class RoleGroupConfig(BaseModel):
@@ -89,6 +91,8 @@ class TemplateConfig(BaseModel):
     form_field_format: str = "**{label}**：{value}"
     fallback_emoji: str = "📋"
     unknown_type_label: str = "未知"
+    # 二次确认的责任/敏感提示默认文案。留空则使用 embeds 模块的 Python 兜底。
+    default_responsibility_notice: str = ""
 
 
 class ComplaintConfig(BaseModel):
