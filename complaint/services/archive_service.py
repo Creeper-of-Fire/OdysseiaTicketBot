@@ -11,6 +11,7 @@ import discord
 
 from .archive_export import build_archive
 from .channel_service import ticket_display
+from utility.command_naming import prefixed_name
 from utility.message import resolve_sendable, send_message
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ class ComplaintArchiveService:
         guild = channel.guild
         archive_channel_id = self._config.get_effective_archive_channel_id(type_id) if type_id else self._config.guild.archive_channel_id
         if not archive_channel_id:
-            raise RuntimeError("未配置归档频道，请先使用 /投诉管理 配置服务器")
+            raise RuntimeError(f"未配置归档频道，请先使用 /{prefixed_name('投诉管理')} 配置服务器")
 
         archive_channel = await resolve_sendable(
             None, guild, archive_channel_id,

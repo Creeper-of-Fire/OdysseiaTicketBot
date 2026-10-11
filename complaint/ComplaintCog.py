@@ -15,6 +15,7 @@ from shared.config.toml_command import (
     handle_toml_view_hash,
 )
 from shared.config.toml_manager import TomlConfigManager
+from utility.command_naming import prefixed_group, prefixed_name
 from utility.feature_cog import FeatureCog
 from utility.helpers import try_get_member
 from utility.message import resolve_sendable, send_message
@@ -85,8 +86,8 @@ class ComplaintCog(FeatureCog):
 
     # ================= 斜杠命令 =================
 
-    complaint_group = app_commands.Group(
-        name=f"{config.COMMAND_GROUP_NAME}丨投诉管理",
+    complaint_group = prefixed_group(
+        "投诉管理",
         description="投诉系统管理命令",
         guild_ids=[gid for gid in config.GUILD_IDS],
         default_permissions=discord.Permissions(manage_roles=True),
@@ -371,7 +372,7 @@ class ComplaintCog(FeatureCog):
         # --- 获取 ticket 编号 ---
         archive_channel_id = cfg.guild.archive_channel_id
         if not archive_channel_id:
-            await followup.send("未配置归档频道，请先使用 /投诉管理 配置服务器。", ephemeral=True)
+            await followup.send(f"未配置归档频道，请先使用 /{prefixed_name('投诉管理')} 配置服务器。", ephemeral=True)
             return
 
         archive_channel = await resolve_sendable(

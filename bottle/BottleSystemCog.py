@@ -32,6 +32,7 @@ from shared.config.toml_command import (
     handle_toml_view_hash,
 )
 from shared.config.toml_manager import TomlConfigManager
+from utility.command_naming import prefixed_group
 from utility.feature_cog import FeatureCog
 
 from .bottle_config import BottleConfig
@@ -149,8 +150,8 @@ class BottleSystemCog(FeatureCog):
 
     # ----- slash commands -----
 
-    bottle_group = app_commands.Group(
-        name=f"{config.COMMAND_GROUP_NAME}丨漂流瓶管理",
+    bottle_group = prefixed_group(
+        "漂流瓶管理",
         description="漂流瓶系统管理(toml / 面板)",
         guild_ids=[gid for gid in config.GUILD_IDS],
         default_permissions=discord.Permissions(manage_channels=True),

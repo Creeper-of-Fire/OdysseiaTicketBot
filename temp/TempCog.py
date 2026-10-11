@@ -8,6 +8,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utility.command_naming import prefixed_group
+
 if TYPE_CHECKING:
     from main import TicketBot
 
@@ -22,8 +24,8 @@ class TempCog(commands.Cog, name="Temp"):
         self.bot = bot
         self.logger = bot.logger
 
-    temp_group = app_commands.Group(
-        name="temp",
+    temp_group = prefixed_group(
+        "temp",
         description="临时功能指令",
         guild_ids=[1134557553011998840],  # 请替换为你的实际服务器ID
         default_permissions=discord.Permissions(manage_roles=True),

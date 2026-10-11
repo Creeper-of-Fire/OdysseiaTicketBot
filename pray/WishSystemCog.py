@@ -8,6 +8,7 @@ from discord.ext import commands, tasks
 import config
 import config_data
 from config_data import GuildWishConfig
+from utility.command_naming import prefixed_group
 from utility.feature_cog import FeatureCog
 from .adapters import AsyncJsonWishRepository, DiscordWishAdapter
 from .pray_core.engine import WishEngine, StateTransitionError
@@ -110,8 +111,8 @@ class WishSystemCog(FeatureCog):
 
     # ================= 核心交互入口 =================
 
-    pray_group = app_commands.Group(
-        name=f"{config.COMMAND_GROUP_NAME}丨许愿", description="许愿池相关指令",
+    pray_group = prefixed_group(
+        "许愿", description="许愿池相关指令",
         guild_ids=[gid for gid in config.GUILD_IDS],
         default_permissions=discord.Permissions(read_messages=True),
     )

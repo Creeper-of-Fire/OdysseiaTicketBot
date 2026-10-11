@@ -11,6 +11,7 @@ from discord.app_commands import Choice
 
 import config
 from core.embed_link.embed_manager import EmbedLinkManager
+from utility.command_naming import prefixed_group
 
 try:
     import distro
@@ -133,8 +134,8 @@ class CoreCog(commands.Cog, name="Core"):
         await asyncio.sleep(5)
         self.logger.info("CoreCog 已就绪，准备执行首次缓存更新...")
 
-    core_group = app_commands.Group(
-        name=f"{config.COMMAND_GROUP_NAME}丨核心", description="机器人核心管理与状态指令",
+    core_group = prefixed_group(
+        "核心", description="机器人核心管理与状态指令",
         guild_ids=[gid for gid in config.GUILD_IDS],
         default_permissions=discord.Permissions(manage_roles=True),
     )

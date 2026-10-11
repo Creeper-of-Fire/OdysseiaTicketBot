@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from complaint.ui.embeds import build_manage_panel_embed
+from utility.command_naming import prefixed_name
 from utility.message import send_message
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ async def create_complaint_channel(
 
     category_id = full_config.get_effective_category_id(type_config.id)
     if not category_id:
-        raise RuntimeError("未配置投诉分类，请先使用 /投诉管理 配置服务器")
+        raise RuntimeError(f"未配置投诉分类，请先使用 /{prefixed_name('投诉管理')} 配置服务器")
 
     category = guild.get_channel(category_id)
     if not isinstance(category, discord.CategoryChannel):
