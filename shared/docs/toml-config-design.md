@@ -2,7 +2,7 @@
 
 > 状态：设计阶段（2026-07-23）
 > 适用范围：三个 bot 仓库（role_bot / odysseia_ticket_bot / news_bot）
-> 配套文档：`subtree-workflow.md`
+> 配套文档：subtree 工作流见 workspace 根目录的 `subtree-workflow.md`（不在本仓库）
 
 ---
 
@@ -230,5 +230,5 @@ per-guild 区分**。当前清单里没有模糊地带；如果将来
 | `role_bot/data/honor_{guild_id}.toml` | 新增 | 实际配置数据 |
 | `role_bot/docs/honor-doc.md` | 新增 | AI 友好说明文档（handler 通过 `manager.read_doc()` 读；放 `docs/` 而非 `data/`，跟代码一起进 git + 被 IDE 索引） |
 
-> 改 `_shared/` 后要走 git subtree pull/push 流程（见 `subtree-workflow.md`），
+> 改 `_shared/` 后要走 git subtree pull/push 流程（见 workspace 根目录的 `subtree-workflow.md`），
 > 三个 bot 仓库才能拿到新文件。

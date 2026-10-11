@@ -109,7 +109,7 @@ class AsyncJsonDataManager(Generic[T]):
                         self.data = json.loads(content)
         except (ValueError, OSError) as e:
             # 出现错误时打印日志并使用空模型
-            print(f"加载文件 {self.file_path} 时出错: {e}。使用默认空数据。")
+            self.logger.error(f"[DataManager] 加载文件 {self.file_path} 时出错: {e}。使用默认空数据。", exc_info=True)
             self._reset_data()
 
     def _reset_data(self):
@@ -180,7 +180,7 @@ class AsyncJsonDataManager(Generic[T]):
                 content = self._serialize_data()
                 await self._write_to_file(content)
         except Exception as e:
-            print(f"[DataManager] 后台保存出错 {self.file_path}: {e}")
+            self.logger.error(f"[DataManager] 后台保存出错 {self.file_path}: {e}", exc_info=True)
         finally:
             self._save_task = None
 
@@ -198,7 +198,9 @@ class AsyncJsonDataManager(Generic[T]):
             except RuntimeError:
                 # 如果没有运行的 loop（比如在脚本测试中），则无法调度后台任务
                 # 这种情况下通常意味着需要手动处理，或者直接同步写
-                print(f"[DataManager] 警告: 在没有事件循环的环境下调用了 save_data，执行同步写入。")
+                self.logger.warning(
+                    "[DataManager] 在没有事件循环的环境下调用了 save_data，执行同步写入。"
+                )
                 content = self._serialize_data()
                 self._write_to_file_sync(content)
                 self._dirty = False
@@ -273,7 +275,7 @@ class AsyncGuildDataManager(AsyncJsonDataManager, Generic[T_Guild]):
                     # 2. 使用 TypeAdapter 验证并转换为模型对象
                     self.data = self._adapter.validate_python(raw_dict)
         except Exception as e:
-            print(f"加载文件 {self.file_path} 时出错: {e}。使用默认空数据。")
+            self.logger.error(f"[DataManager] 加载文件 {self.file_path} 时出错: {e}。使用默认空数据。", exc_info=True)
             self.data = {}
 
     def _serialize_data(self) -> str:
@@ -340,7 +342,7 @@ class AsyncUserGuildDataManager(AsyncJsonDataManager, Generic[T_User]):
                     raw_dict = self._migrate_raw_data(raw_dict)
                     self.data = self._adapter.validate_python(raw_dict)
         except Exception as e:
-            print(f"加载 {self.file_path} 失败: {e}")
+            self.logger.error(f"[DataManager] 加载 {self.file_path} 失败: {e}", exc_info=True)
             self.data = {}
 
     def _serialize_data(self) -> str:
