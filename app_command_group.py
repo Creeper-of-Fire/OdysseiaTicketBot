@@ -160,7 +160,7 @@ class ManagedGroup(app_commands.Group):
     改，误写 CamelCase 也不会让 bot 在 import 阶段崩掉。
 
     不要直接用 ``app_commands.Group(...)``——绕开这里就等于绕开格式化，
-    各 bot 的 ``test_app_command_group.py`` 里的守卫测试会失败。
+    各 bot 自己的 ``test_command_naming.py``（或同类命名的守卫测试）会失败。
     """
 
     def __init__(self, **kwargs: Any) -> None:
