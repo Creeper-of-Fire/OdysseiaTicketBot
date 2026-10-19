@@ -1,0 +1,112 @@
+# English overlay example for the complaint system.
+#
+# This file is an EXAMPLE, not a drop-in config:
+# - copy the *_en fields into your existing data/complaint_<guild_id>.toml
+# - replace every 0 / example value with the real Discord IDs from your server
+# - never invent channel IDs or role IDs
+#
+# Chinese values are kept so the same type works for both entry panels.
+
+[guild]
+category_id = 0          # TODO: complaint category ID
+archive_channel_id = 0   # TODO: archive channel ID
+
+[global]
+archive_concurrent_limit = 2
+media_budget_mb = 32
+single_image_max_mb = 0
+
+[templates]
+# Chinese header (keep your existing value in the real config)
+channel_header = """\
+📌 {complainant_mention} 提交了一份投诉
+🎫 工单编号：工单-{ticket_number}
+📋 投诉类型：{type_emoji} {type_label}
+📅 时间：{timestamp}
+{form_section}
+{custom_section}"""
+
+# English header. If omitted, the built-in English default is used.
+channel_header_en = """\
+📌 {complainant_mention} submitted a complaint
+🎫 Ticket number: #{ticket_number}
+📋 Complaint type: {type_emoji} {type_label}
+📅 Time: {timestamp}
+{form_section}
+{custom_section}"""
+
+form_field_format = "**{label}**：{value}"
+form_field_format_en = "**{label}**: {value}"
+fallback_emoji = "📋"
+unknown_type_label = "未知"
+unknown_type_label_en = "Unknown"
+
+default_responsibility_notice = """\
+⚠️ **请勿在投诉中提交敏感信息**（私聊截图、开盒信息、墙内证据等）。
+请确认你提交的内容适合上述处理组阅读；选错类型导致隐私泄露由提交者本人承担。"""
+
+default_responsibility_notice_en = """\
+⚠️ **Please do not submit sensitive information** (private chat screenshots, doxxing information, etc.).
+Please make sure the content is appropriate for the selected handling team; choosing the wrong type may expose your information to a different team."""
+
+[role_groups.total_admin]
+label = "总管理"
+label_en = "Administrators"
+role_ids = [0]  # TODO: real role IDs
+
+[role_groups.discipline]
+label = "风纪委员"
+label_en = "Moderation Team"
+role_ids = [0]  # TODO: real role IDs
+
+[[types]]
+id = "personal_attack"
+label = "人身攻击投诉"
+label_en = "Personal Attack"
+emoji = "⚔️"
+description = "针对人身攻击行为的投诉"
+description_en = "Report personal attacks or harassment"
+detail_description = """\
+请提供被投诉人、事件经过和相关证据。
+本类型仅由总管理处理。"""
+detail_description_en = """\
+Please provide the accused user, what happened, and any relevant evidence.
+This type is handled by the Administrators team only."""
+target_role_groups = ["total_admin"]
+pin_role_groups = ["total_admin"]
+responsibility_notice = """\
+本类型仅总管理可见。如涉及私聊截图、开盒信息等敏感内容，请确认可以交给总管理处理。"""
+responsibility_notice_en = """\
+This type is visible to the Administrators team only. If the report contains private chat screenshots or doxxing information, make sure you are comfortable sharing it with that team."""
+header_blocks = ["📢 通知 **总管理** {@total_admin} 协助处理"]
+header_blocks_en = ["📢 Notify **Administrators** {@total_admin}"]
+form_fields = [
+    { key = "target", label = "被投诉人", label_en = "Accused user", placeholder = "请输入用户名或 ID", placeholder_en = "Enter a username or ID", style = "short", required = true },
+    { key = "description", label = "详细描述", label_en = "Details", placeholder = "请描述事件经过", placeholder_en = "Describe what happened", style = "paragraph", required = true },
+    { key = "evidence", label = "证据链接（可选）", label_en = "Evidence links (optional)", placeholder = "消息链接、截图链接", placeholder_en = "Message or screenshot links", style = "short", required = false },
+]
+
+[[types]]
+id = "community_content"
+label = "社区不良内容投诉"
+label_en = "Inappropriate Content"
+emoji = "🚫"
+description = "举报社区中的不良内容"
+description_en = "Report inappropriate content in the community"
+detail_description = """\
+请提供内容链接、截图或所在频道，并说明具体问题。"""
+detail_description_en = """\
+Please provide a link, screenshot, or channel where the content appears, and explain the issue."""
+target_role_groups = ["total_admin", "discipline"]
+pin_role_groups = ["discipline"]
+responsibility_notice = """\
+本类型由总管理和风纪委员共同处理。风纪委员不保证对敏感内容的隐私担保；如涉及私聊截图、开盒信息等，请改用「人身攻击投诉」或联系总管理。"""
+responsibility_notice_en = """\
+This type is handled by both the Administrators and Moderation Team. The Moderation Team cannot guarantee privacy for sensitive material; if your report contains private chat screenshots or doxxing information, use the Personal Attack type or contact an Administrator instead."""
+header_blocks = ["📢 通知 **总管理** {@total_admin} 与 **风纪委员** {@discipline} 协助处理"]
+header_blocks_en = ["📢 Notify **Administrators** {@total_admin} and **Moderation Team** {@discipline}"]
+form_fields = [
+    { key = "location", label = "内容位置", label_en = "Where to find it", placeholder = "频道名 / 消息链接", placeholder_en = "Channel name / message link", style = "short", required = true },
+    { key = "description", label = "问题描述", label_en = "What is wrong", placeholder = "请描述违规内容", placeholder_en = "Describe the problematic content", style = "paragraph", required = true },
+    { key = "evidence", label = "证据链接（可选）", label_en = "Evidence links (optional)", placeholder = "截图或消息链接", placeholder_en = "Screenshot or message links", style = "short", required = false },
+]

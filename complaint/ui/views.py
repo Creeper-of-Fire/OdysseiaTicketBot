@@ -22,6 +22,7 @@ from complaint.ui.embeds import (
     build_summon_user_embed,
     build_type_select_embed,
 )
+from complaint.ui.i18n import normalize_locale, t
 from complaint.ui.modals import ComplaintFormModal
 from utility.helpers import try_get_member
 from utility.message import send_message
@@ -34,12 +35,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _format_type_name(type_config) -> str:
+def _format_type_name(type_config, locale: str = "zh") -> str:
     """格式化投诉类型显示名。"""
     if type_config is None:
-        return "未知类型"
+        return t(locale, "common.unknown_type")
     prefix = f"{type_config.emoji} " if type_config.emoji else ""
-    return f"{prefix}{type_config.label}"
+    return f"{prefix}{type_config.localized_label(locale)}"
 
 
 def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -> bool:
@@ -81,26 +82,34 @@ def _can_handle_ticket(interaction: discord.Interaction, cog: "ComplaintCog") ->
 class EntryView(discord.ui.View):
     """入口面板的持久化 View。"""
 
-    def __init__(self, cog: ComplaintCog):
+    def __init__(self, cog: ComplaintCog, locale: str = "zh"):
         super().__init__(timeout=None)
         self.cog = cog
+        self.locale = normalize_locale(locale)
+        custom_id = "complaint:entry" if self.locale == "zh" else f"complaint:entry:{self.locale}"
+        button = discord.ui.Button(
+            label=t(self.locale, "entry.button"),
+            style=discord.ButtonStyle.primary,
+            custom_id=custom_id,
+            row=0,
+        )
+        button.callback = self._btn_submit
+        self.add_item(button)
 
-    @discord.ui.button(
-        label="🔒 提交投诉",
-        style=discord.ButtonStyle.primary,
-        custom_id="complaint:entry",
-        row=0,
-    )
-    async def _btn_submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_submit(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.not_in_guild"), ephemeral=True,
+            )
             return
         cfg = self.cog.get_config(interaction.guild.id)
         if not cfg.types:
-            await interaction.response.send_message("暂无可用的投诉类型。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "entry.no_types"), ephemeral=True,
+            )
             return
 
-        view = TypeSelectView(self.cog, cfg)
+        view = TypeSelectView(self.cog, cfg, self.locale)
         await view.start(interaction, ephemeral=True)
 
 
@@ -109,7 +118,7 @@ class EntryView(discord.ui.View):
 class TypeSelectView(PaginatedView):
     """投诉类型选择面板，选完后需确认才弹出表单。"""
 
-    def __init__(self, cog: ComplaintCog, config: ComplaintConfig):
+    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, locale: str = "zh"):
         super().__init__(
             all_items_provider=lambda: config.types,
             items_per_page=25,
@@ -117,6 +126,7 @@ class TypeSelectView(PaginatedView):
         )
         self.cog = cog
         self._config = config
+        self.locale = normalize_locale(locale)
         self._selected_type_id: str | None = None
 
     async def _rebuild_view(self):
@@ -127,8 +137,8 @@ class TypeSelectView(PaginatedView):
         if page_items:
             options = [
                 discord.SelectOption(
-                    label=ct.label,
-                    description=ct.description[:100] if ct.description else None,
+                    label=ct.localized_label(self.locale),
+                    description=(ct.localized_description(self.locale)[:100] or None),
                     value=ct.id,
                     emoji=ct.emoji or None,
                     default=(ct.id == self._selected_type_id),
@@ -136,7 +146,10 @@ class TypeSelectView(PaginatedView):
                 for ct in page_items
             ]
             self._select = discord.ui.Select(
-                placeholder="重新选择" if self._selected_type_id else "选择投诉类型...",
+                placeholder=t(
+                    self.locale,
+                    "type_select.reselect" if self._selected_type_id else "type_select.placeholder",
+                ),
                 options=options,
             )
             self._select.callback = self._on_select
@@ -144,7 +157,8 @@ class TypeSelectView(PaginatedView):
 
         # 确认按钮
         confirm_btn = discord.ui.Button(
-            label="✅ 确认", style=discord.ButtonStyle.success, row=1,
+            label=t(self.locale, "type_select.confirm"),
+            style=discord.ButtonStyle.success, row=1,
             disabled=not self._selected_type_id,
         )
         confirm_btn.callback = self._on_confirm
@@ -152,7 +166,8 @@ class TypeSelectView(PaginatedView):
 
         # 取消按钮
         cancel_btn = discord.ui.Button(
-            label="❌ 取消", style=discord.ButtonStyle.secondary, row=1,
+            label=t(self.locale, "type_select.cancel"),
+            style=discord.ButtonStyle.secondary, row=1,
         )
         cancel_btn.callback = self._on_cancel
         self.add_item(cancel_btn)
@@ -167,22 +182,29 @@ class TypeSelectView(PaginatedView):
                 for gid in type_config.target_role_groups:
                     group = self._config.role_groups.get(gid)
                     if group:
-                        group_labels.append(group.label)
-                groups_text = "、".join(group_labels) if group_labels else "无"
-                detail = type_config.description
-                if type_config.detail_description:
-                    detail += f"\n\n{type_config.detail_description}"
+                        group_labels.append(group.localized_label(self.locale))
+                separator = ", " if self.locale == "en" else "、"
+                groups_text = separator.join(group_labels) if group_labels else t(
+                    self.locale, "type_select.no_groups",
+                )
+                detail = type_config.localized_description(self.locale)
+                detail_description = type_config.localized_detail_description(self.locale)
+                if detail_description:
+                    detail += f"\n\n{detail_description}"
+                type_label = type_config.localized_label(self.locale)
+                if type_config.emoji:
+                    type_label = f"{type_config.emoji} {type_label}"
                 self.embed = discord.Embed(
-                    title=f"{type_config.emoji} {type_config.label}",
+                    title=type_label,
                     description=(
                         f"{detail}\n\n"
-                        f"**可见管理组**：{groups_text}\n\n"
-                        "点击 **确认** 开始填写投诉表单。"
+                        f"{t(self.locale, 'type_select.visible_groups_line', groups=groups_text)}\n\n"
+                        f"{t(self.locale, 'type_select.click_confirm')}"
                     ),
                     color=0xFEE75C,
                 )
                 return
-        self.embed = build_type_select_embed(self._config)
+        self.embed = build_type_select_embed(self._config, self.locale)
 
     async def _on_select(self, interaction: discord.Interaction):
         if self._select.values:
@@ -198,14 +220,17 @@ class TypeSelectView(PaginatedView):
         cfg = self.cog.get_config(interaction.guild.id)
         type_config = cfg.get_complaint_type(self._selected_type_id)
         if not type_config:
-            await interaction.response.send_message("投诉类型不存在，请重新选择。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "type_select.not_found"), ephemeral=True,
+            )
             return
-        modal = ComplaintFormModal(self.cog, type_config)
+        modal = ComplaintFormModal(self.cog, type_config, self.locale)
         await interaction.response.send_modal(modal)
 
     async def _on_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
-            embed=build_success_embed("已取消选择。"), view=None,
+            embed=build_success_embed(t(self.locale, "type_select.cancelled"), self.locale),
+            view=None,
         )
 
     async def on_error(
@@ -217,10 +242,16 @@ class TypeSelectView(PaginatedView):
         logger.error("TypeSelectView 交互错误 (item=%s): %s", item, error, exc_info=error)
         try:
             if not interaction.response.is_done():
-                await interaction.response.send_message("操作出错，请重试。", ephemeral=True)
+                await interaction.response.send_message(
+                    t(self.locale, "common.operation_error"), ephemeral=True,
+                )
             else:
                 await interaction.edit_original_response(
-                    embed=build_error_embed(f"操作出错：{error}"), view=None,
+                    embed=build_error_embed(
+                        t(self.locale, "common.operation_error_detail", error=error),
+                        self.locale,
+                    ),
+                    view=None,
                 )
         except Exception:
             logger.error("TypeSelectView 无法回复交互", exc_info=True)
@@ -231,21 +262,54 @@ class TypeSelectView(PaginatedView):
 class ManagePanelView(discord.ui.View):
     """频道管理面板的持久化 View。"""
 
-    def __init__(self, cog: ComplaintCog):
+    def __init__(self, cog: ComplaintCog, locale: str = "zh"):
         super().__init__(timeout=None)
         self.cog = cog
+        self.locale = normalize_locale(locale)
+        suffix = "" if self.locale == "zh" else f":{self.locale}"
+        self._add_button(
+            t(self.locale, "manage.summon_role"),
+            discord.ButtonStyle.primary,
+            f"complaint:manage{suffix}_summon",
+            self._btn_summon,
+        )
+        self._add_button(
+            t(self.locale, "manage.summon_user"),
+            discord.ButtonStyle.primary,
+            f"complaint:manage{suffix}_summon_user",
+            self._btn_summon_user,
+        )
+        self._add_button(
+            t(self.locale, "manage.transfer"),
+            discord.ButtonStyle.secondary,
+            f"complaint:manage{suffix}_transfer",
+            self._btn_transfer,
+        )
+        self._add_button(
+            t(self.locale, "manage.close"),
+            discord.ButtonStyle.danger,
+            f"complaint:manage{suffix}_close",
+            self._btn_close,
+        )
 
-    @discord.ui.button(
-        label="📢 召唤身份组",
-        style=discord.ButtonStyle.primary,
-        custom_id="complaint:manage_summon",
-        row=0,
-    )
-    async def _btn_summon(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def _add_button(
+        self,
+        label: str,
+        style: discord.ButtonStyle,
+        custom_id: str,
+        callback,
+    ) -> None:
+        button = discord.ui.Button(
+            label=label, style=style, custom_id=custom_id, row=0,
+        )
+        button.callback = callback
+        self.add_item(button)
+
+    async def _btn_summon(self, interaction: discord.Interaction):
         # 召唤身份组威力太大——临时收回放权，仅 admin 可用。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅管理员可使用此功能。", ephemeral=True,
+                t(self.locale, "manage.admin_only"), ephemeral=True,
             )
             return
 
@@ -253,16 +317,10 @@ class ManagePanelView(discord.ui.View):
         view = SummonSelectView(self.cog, cfg, interaction.guild)
         await view.start(interaction, ephemeral=True)
 
-    @discord.ui.button(
-        label="👤 召唤用户",
-        style=discord.ButtonStyle.primary,
-        custom_id="complaint:manage_summon_user",
-        row=0,
-    )
-    async def _btn_summon_user(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_summon_user(self, interaction: discord.Interaction):
         if not _can_handle_ticket(interaction, self.cog):
             await interaction.response.send_message(
-                "仅管理员或当前工单处理组可使用此功能。", ephemeral=True,
+                t(self.locale, "manage.admin_or_handler"), ephemeral=True,
             )
             return
 
@@ -271,26 +329,23 @@ class ManagePanelView(discord.ui.View):
             embed=build_summon_user_embed(), view=view, ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="🔀 转接工单",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:manage_transfer",
-        row=0,
-    )
-    async def _btn_transfer(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_transfer(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message("请在投诉频道中使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "manage.use_in_ticket"), ephemeral=True,
+            )
             return
 
         meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
         if meta is None:
-            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "manage.not_ticket_channel"), ephemeral=True,
+            )
             return
 
         if not _can_handle_ticket(interaction, self.cog):
             await interaction.response.send_message(
-                "仅管理员或当前工单处理组可转接工单。",
-                ephemeral=True,
+                t(self.locale, "manage.transfer_admin_or_handler"), ephemeral=True,
             )
             return
 
@@ -298,38 +353,38 @@ class ManagePanelView(discord.ui.View):
         view = TransferTypeSelectView(self.cog, cfg, meta.type_id, interaction.guild)
         await view.start(interaction, ephemeral=True)
 
-    @discord.ui.button(
-        label="🗑️ 关闭频道",
-        style=discord.ButtonStyle.danger,
-        custom_id="complaint:manage_close",
-        row=0,
-    )
-    async def _btn_close(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_close(self, interaction: discord.Interaction):
         if not interaction.channel or not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message("请在文本频道内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.use_in_text_channel"), ephemeral=True,
+            )
             return
 
         if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.not_in_guild"), ephemeral=True,
+            )
             return
 
         meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, interaction.channel.id)
         if meta is None:
-            await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "manage.not_ticket_channel"), ephemeral=True,
+            )
             return
 
         # 关闭工单临时收回放权，仅 admin 可用——观察运作中是否会出现痛点。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅管理员可关闭此频道。", ephemeral=True,
+                t(self.locale, "manage.close_admin_only"), ephemeral=True,
             )
             return
-        cfg = self.cog.get_config(interaction.guild.id)
         await interaction.response.send_message(
             embed=build_archive_confirm_embed(
                 operator_mention=interaction.user.mention,
+                locale=self.locale,
             ),
-            view=ArchiveConfirmView(self.cog),
+            view=ArchiveConfirmView(self.cog, self.locale),
             ephemeral=False,
         )
 
@@ -872,48 +927,78 @@ class TransferTypeSelectView(PaginatedView):
 
 # ===== 二次确认（表单提交前）=====
 
+def _add_view_button(
+    view: discord.ui.View,
+    label: str,
+    style: discord.ButtonStyle,
+    custom_id: str,
+    callback,
+    row: int = 0,
+) -> discord.ui.Button:
+    button = discord.ui.Button(label=label, style=style, custom_id=custom_id, row=row)
+    button.callback = callback
+    view.add_item(button)
+    return button
+
+
 class ConfirmProceedView(discord.ui.View):
     """表单提交前的二次确认面板。"""
 
-    def __init__(self, cog: ComplaintCog, type_id: str, user_id: int):
+    def __init__(
+        self,
+        cog: ComplaintCog,
+        type_id: str,
+        user_id: int,
+        locale: str = "zh",
+    ):
         super().__init__(timeout=120)
         self.cog = cog
         self.type_id = type_id
         self._user_id = user_id
+        self.locale = normalize_locale(locale)
+        _add_view_button(
+            self,
+            t(self.locale, "confirm.submit"),
+            discord.ButtonStyle.success,
+            "complaint:confirm_proceed",
+            self._btn_proceed,
+        )
+        _add_view_button(
+            self,
+            t(self.locale, "confirm.cancel"),
+            discord.ButtonStyle.secondary,
+            "complaint:confirm_cancel",
+            self._btn_cancel,
+        )
 
     async def on_timeout(self):
         self.cog._pending_forms.pop((self._user_id, self.type_id), None)
 
-    @discord.ui.button(
-        label="✅ 确认提交",
-        style=discord.ButtonStyle.success,
-        custom_id="complaint:confirm_proceed",
-        row=0,
-    )
-    async def _btn_proceed(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_proceed(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.not_in_guild"), ephemeral=True,
+            )
             return
 
         cfg = self.cog.get_config(interaction.guild.id)
         type_config = cfg.get_complaint_type(self.type_id)
         if not type_config:
-            await interaction.response.send_message("投诉类型不存在，请重新提交。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "confirm.type_missing"), ephemeral=True,
+            )
             return
 
         form_data = self.cog._pending_forms.pop((interaction.user.id, self.type_id), {})
-        await self.cog._do_create_channel(interaction, type_config, form_data)
+        await self.cog._do_create_channel(
+            interaction, type_config, form_data, self.locale,
+        )
 
-    @discord.ui.button(
-        label="❌ 取消",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:confirm_cancel",
-        row=0,
-    )
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_cancel(self, interaction: discord.Interaction):
         self.cog._pending_forms.pop((self._user_id, self.type_id), None)
         await interaction.response.edit_message(
-            embed=build_success_embed("已取消提交。"), view=None,
+            embed=build_success_embed(t(self.locale, "confirm.cancelled"), self.locale),
+            view=None,
         )
 
 
@@ -922,25 +1007,37 @@ class ConfirmProceedView(discord.ui.View):
 class ArchiveConfirmView(discord.ui.View):
     """归档确认的持久化 View。"""
 
-    def __init__(self, cog: ComplaintCog):
+    def __init__(self, cog: ComplaintCog, locale: str = "zh"):
         super().__init__(timeout=None)
         self.cog = cog
+        self.locale = normalize_locale(locale)
+        suffix = "" if self.locale == "zh" else f":{self.locale}"
+        _add_view_button(
+            self,
+            t(self.locale, "archive.confirm"),
+            discord.ButtonStyle.danger,
+            f"complaint:archive_confirm{suffix}",
+            self._btn_archive,
+        )
+        _add_view_button(
+            self,
+            t(self.locale, "archive.cancel"),
+            discord.ButtonStyle.secondary,
+            f"complaint:archive_cancel{suffix}",
+            self._btn_cancel,
+        )
 
-    @discord.ui.button(
-        label="📦 归档频道",
-        style=discord.ButtonStyle.danger,
-        custom_id="complaint:archive_confirm",
-        row=0,
-    )
-    async def _btn_archive(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_archive(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.use_in_text_channel"), ephemeral=True,
+            )
             return
 
         # 归档流程统一 admin 专属（与「关闭频道」保持一致）——避免 handler 跳过 admin 启动直接确认。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅管理员可执行此操作。", ephemeral=True,
+                t(self.locale, "archive.admin_only"), ephemeral=True,
             )
             return
 
@@ -954,7 +1051,11 @@ class ArchiveConfirmView(discord.ui.View):
         tmpl = cfg.templates
 
         type_config = cfg.get_complaint_type(meta.type_id) if meta else None
-        type_label = type_config.label if type_config else tmpl.unknown_type_label
+        type_label = (
+            type_config.localized_label(self.locale)
+            if type_config
+            else tmpl.localized_unknown_type_label(self.locale)
+        )
         type_emoji = type_config.emoji if type_config else tmpl.fallback_emoji
         complainant_id = meta.complainant_id if meta else 0
         ticket_number = parse_ticket_from_name(channel.name)
@@ -972,27 +1073,24 @@ class ArchiveConfirmView(discord.ui.View):
             )
         except Exception as e:
             await interaction.edit_original_response(
-                embed=build_error_embed(f"归档失败：{e}"),
+                embed=build_error_embed(
+                    t(self.locale, "archive.failed", error=e), self.locale,
+                ),
             )
             return
 
         try:
             await interaction.edit_original_response(
-                embed=build_archive_success_embed(archive_url),
-                view=DeleteChannelView(self.cog),
+                embed=build_archive_success_embed(archive_url, self.locale),
+                view=DeleteChannelView(self.cog, self.locale),
             )
         except Exception:
             logger.warning("归档成功 (%s)，但更新交互消息失败", archive_url)
 
-    @discord.ui.button(
-        label="❌ 取消",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:archive_cancel",
-        row=0,
-    )
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
-            embed=build_success_embed("已取消归档操作。"), view=None,
+            embed=build_success_embed(t(self.locale, "archive.cancelled"), self.locale),
+            view=None,
         )
 
 
@@ -1001,41 +1099,48 @@ class ArchiveConfirmView(discord.ui.View):
 class DeleteChannelView(discord.ui.View):
     """归档后删除频道的持久化 View。"""
 
-    def __init__(self, cog: ComplaintCog):
+    def __init__(self, cog: ComplaintCog, locale: str = "zh"):
         super().__init__(timeout=None)
         self.cog = cog
+        self.locale = normalize_locale(locale)
+        suffix = "" if self.locale == "zh" else f":{self.locale}"
+        _add_view_button(
+            self,
+            t(self.locale, "archive.delete"),
+            discord.ButtonStyle.danger,
+            f"complaint:archive_delete{suffix}",
+            self._btn_delete,
+        )
+        _add_view_button(
+            self,
+            t(self.locale, "archive.delete_cancel"),
+            discord.ButtonStyle.secondary,
+            f"complaint:archive_delete_cancel{suffix}",
+            self._btn_cancel,
+        )
 
-    @discord.ui.button(
-        label="🗑️ 删除频道",
-        style=discord.ButtonStyle.danger,
-        custom_id="complaint:archive_delete",
-        row=0,
-    )
-    async def _btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_delete(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
-            await interaction.response.send_message("请在服务器文本频道内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(self.locale, "common.use_in_text_channel"), ephemeral=True,
+            )
             return
 
         # 归档流程统一 admin 专属（与「关闭频道」保持一致）。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅管理员可删除此频道。", ephemeral=True,
+                t(self.locale, "archive.delete_admin_only"), ephemeral=True,
             )
             return
 
         await interaction.response.edit_message(
-            view=DeleteConfirmView(self.cog, interaction.channel),
+            view=DeleteConfirmView(self.cog, interaction.channel, self.locale),
         )
 
-    @discord.ui.button(
-        label="❌ 取消",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:archive_delete_cancel",
-        row=0,
-    )
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_cancel(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
-            embed=build_success_embed("已取消删除操作。"), view=None,
+            embed=build_success_embed(t(self.locale, "archive.delete_cancelled"), self.locale),
+            view=None,
         )
 
 
@@ -1044,30 +1149,47 @@ class DeleteChannelView(discord.ui.View):
 class DeleteConfirmView(discord.ui.View):
     """删除频道的倒计时确认面板，5 秒后自动执行删除。"""
 
-    def __init__(self, cog: ComplaintCog, channel: discord.TextChannel):
+    def __init__(
+        self,
+        cog: ComplaintCog,
+        channel: discord.TextChannel,
+        locale: str = "zh",
+    ):
         super().__init__(timeout=60)
         self.cog = cog
         self.channel = channel
+        self.locale = normalize_locale(locale)
         self._cancelled = asyncio.Event()
+        suffix = "" if self.locale == "zh" else f":{self.locale}"
+        self._confirm_button = _add_view_button(
+            self,
+            t(self.locale, "delete.confirm"),
+            discord.ButtonStyle.danger,
+            f"complaint:delete_confirm{suffix}",
+            self._btn_confirm,
+        )
+        _add_view_button(
+            self,
+            t(self.locale, "archive.delete_cancel"),
+            discord.ButtonStyle.secondary,
+            f"complaint:delete_cancel{suffix}",
+            self._btn_cancel,
+        )
 
-    @discord.ui.button(
-        label="✅ 确认删除频道",
-        style=discord.ButtonStyle.danger,
-        custom_id="complaint:delete_confirm",
-        row=0,
-    )
-    async def _btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_confirm(self, interaction: discord.Interaction):
         # 归档流程统一 admin 专属（与「关闭频道」保持一致）。
         if not is_admin_check(interaction):
             await interaction.response.send_message(
-                "仅管理员可执行此操作。", ephemeral=True,
+                t(self.locale, "delete.admin_only"), ephemeral=True,
             )
             return
 
-        self.remove_item(button)
+        self.remove_item(self._confirm_button)
         countdown = 5
         await interaction.response.edit_message(
-            embed=build_success_embed(f"频道将在 {countdown} 秒后删除..."),
+            embed=build_success_embed(
+                t(self.locale, "delete.countdown", seconds=countdown), self.locale,
+            ),
             view=self,
         )
 
@@ -1077,7 +1199,9 @@ class DeleteConfirmView(discord.ui.View):
                 return
             try:
                 await interaction.edit_original_response(
-                    embed=build_success_embed(f"频道将在 {i} 秒后删除..."),
+                    embed=build_success_embed(
+                        t(self.locale, "delete.countdown", seconds=i), self.locale,
+                    ),
                 )
             except Exception:
                 logger.warning("删除倒计时更新消息失败 (channel=%s)", self.channel.id)
@@ -1096,20 +1220,16 @@ class DeleteConfirmView(discord.ui.View):
             logger.error("删除频道 %s 失败: %s", self.channel.id, e, exc_info=True)
             try:
                 await interaction.edit_original_response(
-                    embed=build_error_embed(f"删除频道失败：{e}"),
+                    embed=build_error_embed(
+                        t(self.locale, "delete.failed", error=e), self.locale,
+                    ),
                 )
             except Exception:
                 logger.warning("删除频道失败且无法通知用户 (channel=%s)", self.channel.id)
 
-    @discord.ui.button(
-        label="❌ 取消",
-        style=discord.ButtonStyle.secondary,
-        custom_id="complaint:delete_cancel",
-        row=0,
-    )
-    async def _btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _btn_cancel(self, interaction: discord.Interaction):
         self._cancelled.set()
         await interaction.response.edit_message(
-            embed=build_success_embed("已取消删除操作。"),
-            view=DeleteChannelView(self.cog),
+            embed=build_success_embed(t(self.locale, "archive.delete_cancelled"), self.locale),
+            view=DeleteChannelView(self.cog, self.locale),
         )

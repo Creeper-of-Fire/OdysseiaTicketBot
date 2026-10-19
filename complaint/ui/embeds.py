@@ -4,43 +4,25 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from complaint.ui.i18n import normalize_locale, t
+
 if TYPE_CHECKING:
     from complaint.config.models import ComplaintTypeConfig, ComplaintConfig
 
 
-def build_entry_embed() -> discord.Embed:
+def build_entry_embed(locale: str = "zh") -> discord.Embed:
     """构建投诉入口面板的 Embed。"""
     return discord.Embed(
-        title="📋 投诉中心",
-        description=(
-            "如果你在社区中遇到了问题，或对管理团队的工作有意见，可以通过本系统提交投诉或反馈。\n\n"
-            "📌 **提交流程**\n"
-            "1. 点击下方「提交投诉」按钮\n"
-            "2. 选择投诉类型\n"
-            "3. 填写投诉表单\n"
-            "4. 系统将为你创建一个私密频道\n\n"
-            "🔒 **隐私保护**\n"
-            "仅你本人和对应处理组成员可见，其他用户无法查看你的投诉内容。"
-        ),
+        title=t(locale, "entry.title"),
+        description=t(locale, "entry.description"),
         color=0x5865F2,
     )
-
-
-# 责任/敏感提示文案未配置时的占位提示。
-#
-# 设计原则（见 discord-bots/AGENTS.md 第 7 条 lesson）：兜底**仅**防止 bot crash，
-# 不应该用"看似合理的默认文案"——那会掩盖 admin 的配置缺失，让 admin 误以为
-# 已经配好。内容必须是清晰的"未配置"指示器，让 admin 一眼看出需要去 toml 配置。
-_UNCONFIGURED_RESPONSIBILITY_NOTICE = (
-    "⚠️ **未配置**：admin 未在 toml 中设置责任提示文案"
-    "（`templates.default_responsibility_notice` 或 `[[types]].responsibility_notice`），"
-    "请联系管理员。"
-)
 
 
 def resolve_responsibility_notice(
     config: "ComplaintConfig",
     type_config: "ComplaintTypeConfig",
+    locale: str = "zh",
 ) -> str:
     """二次确认的责任/敏感提示文案。
 
@@ -48,38 +30,50 @@ def resolve_responsibility_notice(
     最后一项**不是合理默认值**——是 fail-loud 的"未配置"指示器，
     让 admin 看到 bot 在跑这条提示时主动去补配置。
     """
+    if normalize_locale(locale) == "en":
+        return (
+            type_config.responsibility_notice_en.strip()
+            or config.templates.default_responsibility_notice_en.strip()
+            or t("en", "responsibility.unconfigured")
+        )
     return (
         type_config.responsibility_notice.strip()
         or config.templates.default_responsibility_notice.strip()
-        or _UNCONFIGURED_RESPONSIBILITY_NOTICE
+        or t("zh", "responsibility.unconfigured")
     )
 
 
 def _collect_target_group_labels(
     config: "ComplaintConfig",
     type_config: "ComplaintTypeConfig",
+    locale: str,
 ) -> list[str]:
     """收集 type_config.target_role_groups 对应的身份组 label。"""
     labels: list[str] = []
     for gid in type_config.target_role_groups:
         group = config.role_groups.get(gid)
         if group:
-            labels.append(group.label)
+            labels.append(group.localized_label(locale))
     return labels
 
 
-def build_type_select_embed(config: ComplaintConfig) -> discord.Embed:
+def build_type_select_embed(config: ComplaintConfig, locale: str = "zh") -> discord.Embed:
     """构建投诉类型选择面板的 Embed，列出所有可选类型及其可见处理组。"""
-    lines = ["请根据你的需求选择最匹配的投诉类型。\n"]
+    lines = [f"{t(locale, 'type_select.intro')}\n"]
+    separator = ", " if normalize_locale(locale) == "en" else "、"
     for ct in config.types:
-        group_labels = _collect_target_group_labels(config, ct)
-        groups_text = "、".join(group_labels) if group_labels else "（无）"
-        lines.append(
-            f"{ct.emoji} **{ct.label}** — {ct.description}\n"
-            f"　　👁 处理组：{groups_text}"
+        group_labels = _collect_target_group_labels(config, ct, locale)
+        groups_text = separator.join(group_labels) if group_labels else t(
+            locale, "type_select.no_groups",
         )
+        emoji_prefix = f"{ct.emoji} " if ct.emoji else ""
+        line = f"{emoji_prefix}**{ct.localized_label(locale)}**"
+        description = ct.localized_description(locale)
+        if description:
+            line += f" — {description}"
+        lines.append(f"{line}\n{t(locale, 'type_select.group_line', groups=groups_text)}")
     return discord.Embed(
-        title="📋 选择投诉类型",
+        title=t(locale, "type_select.title"),
         description="\n\n".join(lines),
         color=0x5865F2,
     )
@@ -88,117 +82,93 @@ def build_type_select_embed(config: ComplaintConfig) -> discord.Embed:
 def build_confirm_embed(
     config: ComplaintConfig,
     type_config: ComplaintTypeConfig,
+    locale: str = "zh",
 ) -> discord.Embed:
     """构建提交前二次确认的 Embed，列出可见处理组 + 责任/敏感提示文案。"""
-    group_labels = _collect_target_group_labels(config, type_config)
-    groups_text = "、".join(group_labels) if group_labels else "（无）"
-    notice_text = resolve_responsibility_notice(config, type_config)
+    group_labels = _collect_target_group_labels(config, type_config, locale)
+    separator = ", " if normalize_locale(locale) == "en" else "、"
+    groups_text = separator.join(group_labels) if group_labels else t(
+        locale, "type_select.no_groups",
+    )
+    notice_text = resolve_responsibility_notice(config, type_config, locale)
+    type_name = type_config.localized_label(locale)
+    if type_config.emoji:
+        type_name = f"{type_config.emoji} {type_name}"
 
     return discord.Embed(
-        title="⚠️ 确认提交",
+        title=t(locale, "confirm.title"),
         description=(
-            f"你即将提交一份 **{type_config.emoji} {type_config.label}**。\n\n"
-            "提交后系统将：\n"
-            "• 创建一个仅你和对应处理组可见的私密频道\n"
-            "• 通知相关处理组成员加入处理\n"
-            "• 你可以在频道中与处理组直接沟通\n\n"
-            f"👁 **可见处理组**：{groups_text}\n\n"
+            f"{t(locale, 'confirm.intro', type=type_name)}\n\n"
+            f"{t(locale, 'confirm.bullets')}\n\n"
+            f"{t(locale, 'confirm.visible_groups', groups=groups_text)}\n\n"
             f"{notice_text}\n\n"
-            "确定要继续吗？"
+            f"{t(locale, 'confirm.continue')}"
         ),
         color=0xFEE75C,
     )
 
 
-def build_manage_panel_embed() -> discord.Embed:
+def build_manage_panel_embed(locale: str = "zh") -> discord.Embed:
     """构建频道管理面板的 Embed。"""
     return discord.Embed(
-        title="🛠️ 频道管理面板",
-        description=(
-            "本面板用于管理投诉频道的各项操作。\n\n"
-            "• 📢 **召唤身份组**（仅管理员可用） — 邀请身份组加入本频道\n"
-            "• 👤 **召唤用户**（管理员或处理组可用） — 邀请特定用户加入本频道\n"
-            "• 🔀 **转接工单**（当前处理组成员或管理员可用） — 将工单转交给正确的投诉类型处理组\n"
-            "• 🗑️ **关闭频道**（仅管理员可用） — 如果处理完毕，可以归档并关闭本投诉频道"
-        ),
+        title=t(locale, "manage.title"),
+        description=t(locale, "manage.description"),
         color=0x5865F2,
     )
 
 
 def build_archive_confirm_embed(
-        operator_mention: str,
+    operator_mention: str,
+    locale: str = "zh",
 ) -> discord.Embed:
     """构建归档确认的 Embed，可选标注操作人。"""
     return discord.Embed(
-        title="⚠️ 确认归档",
-        description=(
-            f"由 {operator_mention} 发起\n\n"
-            "此操作将对本投诉频道执行归档（管理员或处理组可操作）：\n"
-            "• 导出频道内所有消息为归档文件并保存\n"
-            "• 归档文件将发送至归档频道永久保存\n"
-            "• 归档完成后，可选择删除本频道\n\n"
-            "⚠️ 归档后频道内容将无法恢复，请确认所有问题已处理完毕。\n\n"
-            "确定要继续吗？"
-        ),
+        title=t(locale, "archive.title"),
+        description=t(locale, "archive.description", operator=operator_mention),
         color=0xED4245,
     )
 
 
-def build_archive_success_embed(archive_url: str) -> discord.Embed:
+def build_archive_success_embed(archive_url: str, locale: str = "zh") -> discord.Embed:
     """构建归档成功的 Embed，包含跳转链接。"""
     return discord.Embed(
-        title="✅ 归档完成",
-        description=(
-            f"本频道的所有消息已成功导出为归档文件，并发送至归档频道保存。\n\n"
-            f"📎 [查看归档]({archive_url})\n\n"
-            "管理员或处理组可点击下方按钮删除本频道，或保留以备后续参考。"
-        ),
+        title=t(locale, "archive.success_title"),
+        description=t(locale, "archive.success_description", url=archive_url),
         color=0x57F287,
     )
 
 
-def build_summon_embed() -> discord.Embed:
+def build_summon_embed(locale: str = "zh") -> discord.Embed:
     """构建召唤身份组面板的 Embed。"""
     return discord.Embed(
-        title="📢 召唤身份组",
-        description=(
-            "选择要邀请到本频道的身份组。\n\n"
-            "被选中的身份组的所有成员将被：\n"
-            "• 添加到频道权限，可以查看和发送消息\n\n"
-            "⚠️ 为避免骚扰大量成员，不会发送 @mention 通知。\n"
-            "如有需要，请手动 @ 相关人员。"
-        ),
+        title=t(locale, "summon.role_title"),
+        description=t(locale, "summon.role_description"),
         color=0x5865F2,
     )
 
 
-def build_summon_user_embed() -> discord.Embed:
+def build_summon_user_embed(locale: str = "zh") -> discord.Embed:
     """构建召唤用户面板的 Embed。"""
     return discord.Embed(
-        title="👤 召唤用户",
-        description=(
-            "选择要邀请到本频道的用户，最多可选择 10 位。\n\n"
-            "被选中的用户将被：\n"
-            "• 添加到频道权限，可以查看和发送消息\n"
-            "• 收到加入通知"
-        ),
+        title=t(locale, "summon.user_title"),
+        description=t(locale, "summon.user_description"),
         color=0x5865F2,
     )
 
 
-def build_success_embed(message: str) -> discord.Embed:
+def build_success_embed(message: str, locale: str = "zh") -> discord.Embed:
     """构建通用成功提示的 Embed。"""
     return discord.Embed(
-        title="✅ 操作成功",
+        title=t(locale, "common.success_title"),
         description=message,
         color=0x57F287,
     )
 
 
-def build_error_embed(message: str) -> discord.Embed:
+def build_error_embed(message: str, locale: str = "zh") -> discord.Embed:
     """构建通用错误提示的 Embed。"""
     return discord.Embed(
-        title="❌ 操作失败",
+        title=t(locale, "common.error_title"),
         description=message,
         color=0xED4245,
     )
@@ -211,12 +181,26 @@ def build_notify_embed(
     ticket_number: int,
     channel_mention: str,
     complainant_name: str,
+    locale: str = "zh",
 ) -> discord.Embed:
     """构建工单创建通知 Embed。"""
     return discord.Embed(
-        title="🔔 新工单通知",
+        title=t(locale, "notify.title"),
         color=0x5865F2,
-    ).add_field(name="类型", value=f"{type_emoji} {type_label}", inline=True
-    ).add_field(name="工单编号", value=str(ticket_number), inline=True
-    ).add_field(name="投诉人", value=complainant_name, inline=True
-    ).add_field(name="频道", value=channel_mention, inline=False)
+    ).add_field(
+        name=t(locale, "notify.type"),
+        value=f"{type_emoji} {type_label}",
+        inline=True,
+    ).add_field(
+        name=t(locale, "notify.ticket_number"),
+        value=str(ticket_number),
+        inline=True,
+    ).add_field(
+        name=t(locale, "notify.complainant"),
+        value=complainant_name,
+        inline=True,
+    ).add_field(
+        name=t(locale, "notify.channel"),
+        value=channel_mention,
+        inline=False,
+    )

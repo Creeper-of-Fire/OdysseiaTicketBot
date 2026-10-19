@@ -11,6 +11,8 @@ class ComplaintChannelMeta(BaseModel):
     complainant_id: int
     type_id: str
     form_data: dict[str, str] = {}
+    # 工单创建时使用的界面语言；旧数据缺省为中文。
+    locale: str = "zh"
 
 
 class GuildComplaintData(BaseModel):

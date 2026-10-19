@@ -7,15 +7,37 @@ from pydantic import BaseModel, Field, field_validator
 from complaint.services.channel_service import TICKET_PREFIX
 from shared.config.toml_merge import TomlMergeAsTableList
 
+_DEFAULT_CHANNEL_HEADER_EN = (
+    "📌 {complainant_mention} submitted a complaint\n"
+    "🎫 Ticket number: #{ticket_number}\n"
+    "📋 Complaint type: {type_emoji} {type_label}\n"
+    "📅 Time: {timestamp}\n"
+    "{form_section}\n"
+    "{custom_section}"
+)
+
 
 class FormFieldConfig(BaseModel):
     """表单字段配置。"""
 
     key: str
     label: str
+    label_en: str = ""
     placeholder: str = ""
+    placeholder_en: str = ""
     style: Literal["short", "paragraph"] = "short"
     required: bool = True
+
+    def localized_label(self, locale: str) -> str:
+        """英文面板优先用 label_en；缺翻译时回退中文，避免出现空字段名。"""
+        if locale == "en":
+            return self.label_en.strip() or self.label
+        return self.label
+
+    def localized_placeholder(self, locale: str) -> str:
+        if locale == "en":
+            return self.placeholder_en.strip() or self.placeholder
+        return self.placeholder
 
 
 class ComplaintTypeConfig(BaseModel):
@@ -23,15 +45,33 @@ class ComplaintTypeConfig(BaseModel):
 
     id: str
     label: str
+    label_en: str = ""
     emoji: str = ""
     description: str = ""
+    description_en: str = ""
     # 选中后展示的详细说明，支持多行。为空时不追加额外内容。
     detail_description: str = ""
+    detail_description_en: str = ""
 
-    @field_validator("detail_description", mode="before")
+    @field_validator("detail_description", "detail_description_en", mode="before")
     @classmethod
     def _trim_detail(cls, v: str) -> str:
         return v.strip() if isinstance(v, str) else v
+
+    def localized_label(self, locale: str) -> str:
+        if locale == "en":
+            return self.label_en.strip() or self.label
+        return self.label
+
+    def localized_description(self, locale: str) -> str:
+        if locale == "en":
+            return self.description_en.strip() or self.description
+        return self.description
+
+    def localized_detail_description(self, locale: str) -> str:
+        if locale == "en":
+            return self.detail_description_en.strip() or self.detail_description
+        return self.detail_description
     target_role_groups: list[str] = []
     # 标注权：target_role_groups 中哪些组在工单频道获得「标注消息」权限
     # （PIN_MESSAGES，2025-08 从管理消息拆分出的独立权限）。引用 role_groups 的组 ID。
@@ -41,6 +81,8 @@ class ComplaintTypeConfig(BaseModel):
     # 支持宏：{@group_id} → 对应身份组的角色 mention，
     # {type_label}、{type_emoji}、{ticket_number} → 投诉类型信息。
     header_blocks: list[str] = []
+    # 英文入口创建的工单使用此通知块；留空则复用 header_blocks。
+    header_blocks_en: list[str] = []
     # 创建工单后向此频道/帖子发送通知 embed。0 = 不发送。
     notify_channel_id: int = 0
     # 通知文案模板，渲染后作为消息 content 发送（触发 @mention 推送）。
@@ -54,13 +96,20 @@ class ComplaintTypeConfig(BaseModel):
     # 二次确认的责任/敏感提示文案，覆盖 templates.default_responsibility_notice。
     # 留空则回退到 templates 级别默认，仍为空则使用 embeds 模块的 Python 兜底。
     responsibility_notice: str = ""
+    responsibility_notice_en: str = ""
 
 
 class RoleGroupConfig(BaseModel):
     """身份组配置，将多个 Discord 角色打包为一组以便引用。"""
 
     label: str
+    label_en: str = ""
     role_ids: list[int] = []
+
+    def localized_label(self, locale: str) -> str:
+        if locale == "en":
+            return self.label_en.strip() or self.label
+        return self.label
 
 
 class GuildConfig(BaseModel):
@@ -88,11 +137,31 @@ class TemplateConfig(BaseModel):
         "{form_section}\n"
         "{custom_section}"
     )
+    # 英文入口创建的工单使用此模板；留空则使用内置英文默认模板。
+    channel_header_en: str = ""
     form_field_format: str = "**{label}**：{value}"
+    form_field_format_en: str = "**{label}**: {value}"
     fallback_emoji: str = "📋"
     unknown_type_label: str = "未知"
+    unknown_type_label_en: str = "Unknown"
     # 二次确认的责任/敏感提示默认文案。留空则使用 embeds 模块的 Python 兜底。
     default_responsibility_notice: str = ""
+    default_responsibility_notice_en: str = ""
+
+    def localized_channel_header(self, locale: str) -> str:
+        if locale == "en":
+            return self.channel_header_en.strip() or _DEFAULT_CHANNEL_HEADER_EN
+        return self.channel_header
+
+    def localized_form_field_format(self, locale: str) -> str:
+        if locale == "en":
+            return self.form_field_format_en.strip() or "**{label}**: {value}"
+        return self.form_field_format
+
+    def localized_unknown_type_label(self, locale: str) -> str:
+        if locale == "en":
+            return self.unknown_type_label_en.strip() or "Unknown"
+        return self.unknown_type_label
 
 
 class ComplaintConfig(BaseModel):

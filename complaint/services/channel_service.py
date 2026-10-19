@@ -143,6 +143,7 @@ async def create_complaint_channel(
     form_data: dict[str, str],
     full_config: ComplaintConfig,
     ticket_number: int,
+    locale: str = "zh",
 ) -> discord.TextChannel:
     """创建投诉频道、设置权限、发送初始消息和管理面板。"""
     from complaint.services.channel_meta import ComplaintChannelMeta
@@ -244,6 +245,7 @@ async def create_complaint_channel(
         complainant_id=complainant.id,
         type_id=type_config.id,
         form_data=form_data,
+        locale=locale,
     )
     cog.channel_manager.register_channel(guild.id, channel.id, meta)
     await cog.channel_manager.save_data()
@@ -256,6 +258,7 @@ async def create_complaint_channel(
         ticket_number=ticket_number,
         full_config=full_config,
         guild=guild,
+        locale=locale,
     )
     await send_message(
         channel,
@@ -263,8 +266,8 @@ async def create_complaint_channel(
         allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
     )
 
-    manage_view = ManagePanelView(cog)
-    await send_message(channel, embed=build_manage_panel_embed(), view=manage_view)
+    manage_view = ManagePanelView(cog, locale)
+    await send_message(channel, embed=build_manage_panel_embed(locale), view=manage_view)
     cog.bot.add_view(manage_view)
 
     logger.info(
@@ -370,6 +373,7 @@ def _render_header(
     ticket_number: int,
     full_config: ComplaintConfig,
     guild: discord.Guild,
+    locale: str = "zh",
 ) -> str:
     """根据模板渲染频道头部消息。"""
     from complaint.config.models import TemplateConfig  # noqa
@@ -382,20 +386,28 @@ def _render_header(
         for field in type_config.form_fields:
             value = form_data.get(field.key, "")
             if value:
-                lines.append(templates.form_field_format.format(label=field.label, value=value))
+                lines.append(
+                    templates.localized_form_field_format(locale).format(
+                        label=field.localized_label(locale), value=value,
+                    )
+                )
         form_section = "\n".join(lines)
 
+    header_blocks = type_config.header_blocks
+    if locale == "en" and type_config.header_blocks_en:
+        header_blocks = type_config.header_blocks_en
     custom_section = _render_header_blocks(
-        header_blocks=type_config.header_blocks,
+        header_blocks=header_blocks,
         full_config=full_config,
         guild=guild,
         type_config=type_config,
         ticket_number=ticket_number,
+        locale=locale,
     )
 
-    return templates.channel_header.format(
+    return templates.localized_channel_header(locale).format(
         complainant_mention=complainant.mention,
-        type_label=type_config.label,
+        type_label=type_config.localized_label(locale),
         type_emoji=type_config.emoji,
         timestamp=timestamp,
         form_section=form_section,
@@ -416,6 +428,7 @@ def _render_header_blocks(
     guild: discord.Guild,
     type_config: ComplaintTypeConfig,
     ticket_number: int,
+    locale: str = "zh",
 ) -> str:
     """将 header_blocks 中的宏替换为实际内容，返回拼接后的文本。"""
     if not header_blocks:
@@ -423,7 +436,7 @@ def _render_header_blocks(
 
     # 纯文本宏，直接查表替换
     static_macros: dict[str, str] = {
-        "type_label": type_config.label,
+        "type_label": type_config.localized_label(locale),
         "type_emoji": type_config.emoji,
         "ticket_number": str(ticket_number),
     }
@@ -460,13 +473,14 @@ def render_notify_message(
     ticket_number: int,
     complainant: discord.Member,
     channel: discord.TextChannel,
+    locale: str = "zh",
 ) -> str:
     """将 notify_message 中的宏替换为实际内容并返回。"""
     if not notify_message:
         return ""
 
     static_macros: dict[str, str] = {
-        "type_label": type_config.label,
+        "type_label": type_config.localized_label(locale),
         "type_emoji": type_config.emoji,
         "ticket_number": str(ticket_number),
         "complainant": complainant.mention,

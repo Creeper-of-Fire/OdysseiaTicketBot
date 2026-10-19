@@ -34,6 +34,7 @@ from .ui.embeds import (
     build_notify_embed,
     build_success_embed,
 )
+from .ui.i18n import normalize_locale, t
 from .ui.views import ArchiveConfirmView, ConfirmProceedView, DeleteChannelView, EntryView, ManagePanelView
 
 if TYPE_CHECKING:
@@ -61,10 +62,11 @@ class ComplaintCog(FeatureCog):
             doc_path=Path("docs") / "投诉系统使用手册.md",
         )
 
-        bot.add_view(EntryView(self))
-        bot.add_view(ArchiveConfirmView(self))
-        bot.add_view(DeleteChannelView(self))
-        bot.add_view(ManagePanelView(self))
+        for locale in ("zh", "en"):
+            bot.add_view(EntryView(self, locale))
+            bot.add_view(ArchiveConfirmView(self, locale))
+            bot.add_view(DeleteChannelView(self, locale))
+            bot.add_view(ManagePanelView(self, locale))
         self.logger.info("投诉系统 Cog 已加载")
 
     def get_config(self, guild_id: int) -> ComplaintConfig:
@@ -94,28 +96,47 @@ class ComplaintCog(FeatureCog):
     )
 
     @complaint_group.command(name="发布入口面板", description="在当前频道发布投诉入口面板")
+    @app_commands.rename(language="语言")
+    @app_commands.describe(language="面板语言：中文 / English")
+    @app_commands.choices(language=[
+        app_commands.Choice(name="中文", value="zh"),
+        app_commands.Choice(name="English", value="en"),
+    ])
     @is_admin()
-    async def cmd_post_entry(self, interaction: discord.Interaction):
+    async def cmd_post_entry(
+        self,
+        interaction: discord.Interaction,
+        language: app_commands.Choice[str] | None = None,
+    ):
+        locale = normalize_locale(language.value if language else "zh")
         target = interaction.channel
         if target is None:
-            await interaction.response.send_message("无法定位当前频道。", ephemeral=True)
+            await interaction.response.send_message(
+                t(locale, "entry.no_channel"), ephemeral=True,
+            )
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await send_message(target, embed=build_entry_embed(), view=EntryView(self))
+            await send_message(
+                target,
+                embed=build_entry_embed(locale),
+                view=EntryView(self, locale),
+            )
         except discord.Forbidden:
             await interaction.edit_original_response(
-                content="没有权限在当前频道发送消息。"
+                content=t(locale, "entry.no_permission")
             )
             return
         except Exception as e:
-            await interaction.edit_original_response(content=f"发布失败：{e}")
+            await interaction.edit_original_response(
+                content=t(locale, "entry.post_failed", error=e)
+            )
             return
 
         mention = target.mention if hasattr(target, "mention") else target.name
         await interaction.edit_original_response(
-            content=f"已在 {mention} 发布投诉入口面板。"
+            content=t(locale, "entry.posted", channel=mention)
         )
 
     @complaint_group.command(name="重载配置", description="从 TOML 文件重新加载投诉配置")
@@ -206,14 +227,17 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("当前频道不是投诉频道。", ephemeral=True)
             return
 
-        manage_view = ManagePanelView(self)
+        locale = normalize_locale(meta.locale)
+        manage_view = ManagePanelView(self, locale)
         await send_message(
             interaction.channel,
-            embed=build_manage_panel_embed(),
+            embed=build_manage_panel_embed(locale),
             view=manage_view,
         )
         self.bot.add_view(manage_view)
-        await interaction.response.send_message("✅ 管理面板已重新发送。", ephemeral=True)
+        await interaction.response.send_message(
+            t(locale, "manage.resent"), ephemeral=True,
+        )
 
     @complaint_group.command(name="强制归档", description="在当前投诉频道发起归档")
     @is_admin()
@@ -228,11 +252,14 @@ class ComplaintCog(FeatureCog):
             await interaction.response.send_message("该频道不在投诉分类下，无法归档。", ephemeral=True)
             return
 
+        meta = self.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
+        locale = normalize_locale(meta.locale if meta else "zh")
         await interaction.response.send_message(
             embed=build_archive_confirm_embed(
                 operator_mention=interaction.user.mention,
+                locale=locale,
             ),
-            view=ArchiveConfirmView(self),
+            view=ArchiveConfirmView(self, locale),
         )
 
     @complaint_group.command(name="召唤", description="通过用户ID或@提及召唤用户到当前投诉频道")
@@ -322,6 +349,7 @@ class ComplaintCog(FeatureCog):
             type_config: ComplaintTypeConfig | None,
             form_data: dict[str, str],
             cfg: ComplaintConfig | None = None,
+            locale: str = "zh",
     ) -> None:
         """处理表单提交：所有类型统一走二次确认，再创建频道。
 
@@ -329,7 +357,9 @@ class ComplaintCog(FeatureCog):
         requires_confirm 字段导致部分类型直接跳到创建，体验不一致。
         """
         if type_config is None:
-            await interaction.response.send_message("内部错误：投诉类型丢失。", ephemeral=True)
+            await interaction.response.send_message(
+                t(locale, "confirm.internal_type_lost"), ephemeral=True,
+            )
             return
 
         # modal 没传 cfg 时按需补取（防御性，正常路径 modal 已传）。
@@ -337,12 +367,12 @@ class ComplaintCog(FeatureCog):
             cfg = self.get_config(interaction.guild.id)
         if cfg is None:
             await interaction.response.send_message(
-                "内部错误：配置丢失。", ephemeral=True,
+                t(locale, "confirm.internal_config_lost"), ephemeral=True,
             )
             return
         self._pending_forms[(interaction.user.id, type_config.id)] = form_data
-        embed = build_confirm_embed(cfg, type_config)
-        view = ConfirmProceedView(self, type_config.id, interaction.user.id)
+        embed = build_confirm_embed(cfg, type_config, locale)
+        view = ConfirmProceedView(self, type_config.id, interaction.user.id, locale)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _do_create_channel(
@@ -350,18 +380,23 @@ class ComplaintCog(FeatureCog):
             interaction: discord.Interaction,
             type_config: ComplaintTypeConfig,
             form_data: dict[str, str],
+            locale: str = "zh",
     ) -> None:
         """执行投诉频道创建：分配工单编号、创建频道、发送初始消息。"""
         if not interaction.guild:
-            await interaction.response.send_message("请在服务器内使用。", ephemeral=True)
+            await interaction.response.send_message(
+                t(locale, "common.not_in_guild"), ephemeral=True,
+            )
             return
 
         if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("无法读取成员信息。", ephemeral=True)
+            await interaction.response.send_message(
+                t(locale, "create.member_error"), ephemeral=True,
+            )
             return
 
         if interaction.response.is_done():
-            await interaction.edit_original_response(content="正在创建投诉频道...")
+            await interaction.edit_original_response(content=t(locale, "create.creating"))
             followup = interaction.followup
         else:
             await interaction.response.defer(ephemeral=True, thinking=True)
@@ -372,14 +407,14 @@ class ComplaintCog(FeatureCog):
         # --- 获取 ticket 编号 ---
         archive_channel_id = cfg.guild.archive_channel_id
         if not archive_channel_id:
-            await followup.send(f"未配置归档频道，请先使用 /{prefixed_name('投诉管理')} 配置服务器。", ephemeral=True)
+            await followup.send(t(locale, "create.no_archive", command_name=prefixed_name('投诉管理')), ephemeral=True)
             return
 
         archive_channel = await resolve_sendable(
             self.bot, interaction.guild, archive_channel_id,
         )
         if archive_channel is None:
-            await followup.send("归档频道不可用，请检查配置。", ephemeral=True)
+            await followup.send(t(locale, "create.archive_unavailable"), ephemeral=True)
             return
 
         try:
@@ -402,6 +437,7 @@ class ComplaintCog(FeatureCog):
                 form_data=form_data,
                 full_config=cfg,
                 ticket_number=ticket_number,
+                locale=locale,
             )
         except Exception as e:
             self.logger.error("创建投诉频道失败: %s", e, exc_info=True)
@@ -415,7 +451,7 @@ class ComplaintCog(FeatureCog):
                 except Exception:
                     self.logger.warning("回滚投诉频道 %s 失败", channel.id, exc_info=True)
             try:
-                await followup.send(f"创建频道失败：{e}", ephemeral=True)
+                await followup.send(t(locale, "create.failed", error=e), ephemeral=True)
             except Exception:
                 pass
             return
@@ -430,13 +466,19 @@ class ComplaintCog(FeatureCog):
                     ticket_number=ticket_number,
                     complainant=interaction.user,
                     channel=channel,
+                    locale=locale,
                 )
             except Exception:
                 self.logger.warning("工单 %s 通知发送失败", ticket_number, exc_info=True)
 
         try:
             await followup.send(
-                f"✅ 投诉频道已创建：{channel.mention}（{ticket_display(ticket_number)}）",
+                t(
+                    locale,
+                    "create.success",
+                    channel=channel.mention,
+                    ticket=ticket_display(ticket_number),
+                ),
                 ephemeral=True,
             )
         except Exception:
@@ -451,6 +493,7 @@ class ComplaintCog(FeatureCog):
             ticket_number: int,
             complainant: discord.Member,
             channel: discord.TextChannel,
+            locale: str = "zh",
     ) -> None:
         """工单创建后向配置的频道/帖子发送通知。"""
         target = self.bot.get_channel(type_config.notify_channel_id)
@@ -471,13 +514,15 @@ class ComplaintCog(FeatureCog):
             ticket_number=ticket_number,
             complainant=complainant,
             channel=channel,
+            locale=locale,
         )
         embed = build_notify_embed(
-            type_label=type_config.label,
+            type_label=type_config.localized_label(locale),
             type_emoji=type_config.emoji,
             ticket_number=ticket_number,
             channel_mention=channel.mention,
             complainant_name=complainant.display_name,
+            locale=locale,
         )
         await send_message(
             target,

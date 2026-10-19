@@ -17,10 +17,13 @@ class ComplaintFormModal(discord.ui.Modal):
         self,
         cog: ComplaintCog,
         type_config: ComplaintTypeConfig,
+        locale: str = "zh",
     ):
         self.cog = cog
         self.type_config = type_config
-        title = f"{type_config.emoji} {type_config.label}" if type_config.emoji else type_config.label
+        self.locale = locale
+        type_label = type_config.localized_label(locale)
+        title = f"{type_config.emoji} {type_label}" if type_config.emoji else type_label
         super().__init__(title=title[:45], timeout=300)
 
         self._field_keys: list[str] = []
@@ -31,8 +34,8 @@ class ComplaintFormModal(discord.ui.Modal):
                 else discord.TextStyle.short
             )
             text_input = discord.ui.TextInput(
-                label=field.label[:45],
-                placeholder=field.placeholder or "",
+                label=field.localized_label(locale)[:45],
+                placeholder=field.localized_placeholder(locale),
                 style=style,
                 required=field.required,
                 max_length=1000 if style == discord.TextStyle.paragraph else 200,
@@ -62,4 +65,5 @@ class ComplaintFormModal(discord.ui.Modal):
             type_config=self.type_config,
             form_data=form_data,
             cfg=cfg,
+            locale=self.locale,
         )
