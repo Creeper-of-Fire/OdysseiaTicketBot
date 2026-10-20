@@ -193,29 +193,10 @@ per-guild 区分**。当前清单里没有模糊地带；如果将来
 
 `config_data.py` 里 per-guild 的配置处置：
 
-- `HONOR_CONFIG` → 第一波迁 toml
-- `GUILD_CONFIGS` / `FASHION_CONFIG` / `ROLE_SYNC_CONFIG` → 暂留
-  python dict，等第一波跑稳再排期
-
-## TODO（后续）
-
-### EmbedLinkManager 迁移
-
-`role_bot/core/embed_link/embed_manager.py` 在新体系下需要重新评估：
-
-- 类级别 `_registry` / `configs` 是进程内存单例，bot 重启 / 多 worker 场景失效
-- 配置文件是裸 JSON（`./data/embed_links.json`），没有 schema 验证
-- 与即将落地的 toml + pydantic 体系双轨并行，配置来源分裂
-- 仅 `role_bot` 真在用：
-  - `FashionCog.fashion_guide`
-  - `SelfServiceCog.self_service_guide`
-  - `HonorCog.honor_celebrate_guide`
-- `ticket_bot` / `news_bot` 只引入了基础设施但无业务 cog 调用，可视为占位
-
-**处理建议**（待定，本轮不动）：迁到 toml 体系，或重构成
-"每次引用重新 fetch"的无状态设计。本模块并非天然 per-guild
-（它是 per-cog-key），迁 toml 会打破上文的"per-guild 红线"，
-需要评估如何映射到虚拟 guild 概念或破例。
+- `HONOR_CONFIG` → 已迁 toml（第一波，已完成）
+- `FASHION_CONFIG` → 已迁 toml（2026-08 重构，fashion / model_fan_roles 配置层）
+- `GUILD_CONFIGS` / `ROLE_SYNC_CONFIG` → 暂留
+  python dict，等排期
 
 ## 波及面（实现阶段预计）
 
