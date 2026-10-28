@@ -28,6 +28,9 @@ COGS = {
     "core": {
         "enabled": True,
     },
+    "help_center": {
+        "enabled": True,
+    },
     "wish": {
         "enabled": True,
     },

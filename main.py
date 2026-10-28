@@ -11,6 +11,7 @@ import config
 import config_data
 from core.CoreCog import CoreCog
 from core.embed_link.embed_manager import EmbedLinkManager
+from help_center.HelpCenterCog import HelpCenterCog
 from pray.WishSystemCog import WishSystemCog
 from bottle.BottleSystemCog import BottleSystemCog
 from temp.TempCog import TempCog
@@ -133,6 +134,7 @@ class CogManager:
         # 定义一个 cog 名称到其类定义的映射，方便动态加载
         self.cog_map: Dict[str, Type[commands.Cog] | List[Type[commands.Cog]]] = {
             "core": CoreCog,
+            "help_center": HelpCenterCog,
             "wish": WishSystemCog,
             "bottle": BottleSystemCog,
             "temp":TempCog,
