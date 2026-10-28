@@ -155,7 +155,7 @@ async def interactive_loop():
 
             elif cmd == "new":
                 title = " ".join(parts[1:]) if len(parts) > 1 else "神秘愿望"
-                engine.create_wish(me, WishCategory.BOT_FEATURE, title, "无内容")
+                await engine.create_wish(me, WishCategory.BOT_FEATURE, title, "无内容")
                 adapter._add_log(f"✅ 创建愿望成功: {title}")
 
             elif cmd == "vote":
@@ -163,17 +163,17 @@ async def interactive_loop():
                 wid = parts[1]
                 # 模拟一个新用户去投票
                 fake_uid = uuid.uuid4().int % 10000
-                engine.support_wish(UserContext(user_id=str(fake_uid), role=UserRole.NORMAL), wid)
+                await engine.support_wish(UserContext(user_id=str(fake_uid), role=UserRole.NORMAL), wid)
                 adapter._add_log(f"👍 用户 {fake_uid} 投了一票给 {wid}")
 
             elif cmd == "claim":
                 if len(parts) < 2: raise ValueError("请输入ID")
-                engine.claim_wish(me, parts[1], "https://proposal.link")
+                await engine.claim_wish(me, parts[1], "https://proposal.link")
                 adapter._add_log(f"🛠️ 你认领了愿望 {parts[1]}")
 
             elif cmd == "done":
                 if len(parts) < 2: raise ValueError("请输入ID")
-                engine.admin_resolve_proposal(me, parts[1], True)
+                await engine.admin_resolve_proposal(me, parts[1], True)
                 adapter._add_log(f"🎉 标记 {parts[1]} 为已实现！")
 
             else:
