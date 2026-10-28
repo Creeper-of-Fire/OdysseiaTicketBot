@@ -13,7 +13,7 @@ from utility.message import send_message
 
 if TYPE_CHECKING:
     from complaint.ComplaintCog import ComplaintCog
-    from complaint.config.models import ComplaintConfig, ComplaintTypeConfig
+    from complaint.config.models import ComplaintConfig, ComplaintTypeConfig, TemplateConfig
 
 logger = logging.getLogger(__name__)
 
@@ -376,8 +376,6 @@ def _render_header(
     locale: str = "zh",
 ) -> str:
     """根据模板渲染频道头部消息。"""
-    from complaint.config.models import TemplateConfig  # noqa
-
     timestamp = f"<t:{int(datetime.now().timestamp())}:f>"
 
     form_section = ""
