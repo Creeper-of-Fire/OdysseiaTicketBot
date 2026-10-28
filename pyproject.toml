@@ -1,0 +1,8 @@
+[tool.pyright]
+# 拦截"调用 async 函数却忘记 await"这类静默失败。
+# 本 bot 的数据层（AsyncGuildDataManager / bottle / pray 等）写盘全是 async——
+# 忘了 await 就是静默不落盘、重启即丢，且不报任何错。开启后编辑器直接报 error。
+reportUnusedCoroutine = "error"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"
