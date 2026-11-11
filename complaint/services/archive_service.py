@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from .archive_export import build_archive
+from .archive_guard import ARCHIVE_PERMISSIONS, ensure_permissions
 from .channel_service import ticket_display
 from utility.command_naming import prefixed_name
 from utility.message import resolve_sendable, send_message
@@ -60,6 +61,9 @@ class ComplaintArchiveService:
         )
         if archive_channel is None:
             raise RuntimeError("归档频道不可用")
+
+        # 权限预检：归档文件要发消息 + 传附件，缺任一项都会 403。
+        ensure_permissions(archive_channel, ARCHIVE_PERMISSIONS)
 
         header_lines = self._build_header_lines(
             channel=channel,

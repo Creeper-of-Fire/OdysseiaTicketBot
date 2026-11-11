@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from complaint.config.models import ComplaintConfig
+from complaint.services.archive_guard import ArchivePermissionError
 from complaint.services.channel_service import (
     parse_ticket_from_name,
     render_notify_message,
@@ -1071,6 +1072,20 @@ class ArchiveConfirmView(discord.ui.View):
                 ticket_number=ticket_number,
                 operator=interaction.user,
             )
+        except ArchivePermissionError as e:
+            # 归档频道权限不足：明确指出缺哪些权限，便于管理员自助修复。
+            await interaction.edit_original_response(
+                embed=build_error_embed(
+                    t(
+                        self.locale,
+                        "archive.no_permission",
+                        channel_id=e.channel_id,
+                        permissions="、".join(e.missing),
+                    ),
+                    self.locale,
+                ),
+            )
+            return
         except Exception as e:
             await interaction.edit_original_response(
                 embed=build_error_embed(

@@ -21,6 +21,7 @@ from utility.helpers import try_get_member
 from utility.message import resolve_sendable, send_message
 from utility.permison import is_admin
 from .config.models import ComplaintConfig, ComplaintTypeConfig
+from .services.archive_guard import ArchivePermissionError
 from .services.archive_service import ComplaintArchiveService
 from .services.channel_meta import ComplaintChannelManager
 from .services.channel_service import create_complaint_channel, render_notify_message, ticket_display
@@ -421,6 +422,29 @@ class ComplaintCog(FeatureCog):
             reserved = await self._counter_service.reserve_number(
                 interaction.guild.id, archive_channel,
             )
+        except ArchivePermissionError as e:
+            # 归档频道权限不足：明确告诉用户缺什么权限，而不是让异常逃逸。
+            self.logger.warning(
+                "归档频道 %s 权限不足：%s", e.channel_id, "、".join(e.missing),
+            )
+            await followup.send(
+                t(
+                    locale,
+                    "create.archive_no_permission",
+                    channel_id=e.channel_id,
+                    permissions="、".join(e.missing),
+                ),
+                ephemeral=True,
+            )
+            return
+        except discord.Forbidden:
+            # 权限在预检与实际请求之间被改动，或 Discord 侧的其他 403。
+            self.logger.warning("归档频道 %s 拒绝访问", archive_channel_id, exc_info=True)
+            await followup.send(
+                t(locale, "create.archive_forbidden", channel_id=archive_channel_id),
+                ephemeral=True,
+            )
+            return
         except RuntimeError as e:
             await followup.send(str(e), ephemeral=True)
             return

@@ -155,6 +155,28 @@ _TEXTS: dict[str, dict[Locale, str]] = {
         "zh": "归档频道不可用，请检查配置。",
         "en": "The archive channel is unavailable. Please check the configuration.",
     },
+    "create.archive_no_permission": {
+        "zh": (
+            "⚠️ **机器人权限不足**，无法分配工单编号。\n"
+            "归档频道 <#{channel_id}> 缺少权限：{permissions}\n"
+            "请联系服务器管理员为机器人角色补齐上述权限后重试。"
+        ),
+        "en": (
+            "⚠️ **The bot lacks permission** and cannot assign a ticket number.\n"
+            "The archive channel <#{channel_id}> is missing: {permissions}\n"
+            "Please ask a server administrator to grant these permissions to the bot role, then try again."
+        ),
+    },
+    "create.archive_forbidden": {
+        "zh": (
+            "⚠️ **机器人无法访问归档频道** <#{channel_id}>。\n"
+            "请联系服务器管理员检查机器人角色在该频道的权限后重试。"
+        ),
+        "en": (
+            "⚠️ **The bot cannot access the archive channel** <#{channel_id}>.\n"
+            "Please ask a server administrator to check the bot role's permissions on that channel, then try again."
+        ),
+    },
     "create.failed": {"zh": "创建频道失败：{error}", "en": "Failed to create the channel: {error}"},
     "create.success": {
         "zh": "✅ 投诉频道已创建：{channel}（{ticket}）",
@@ -232,6 +254,18 @@ _TEXTS: dict[str, dict[Locale, str]] = {
         ),
     },
     "archive.confirm": {"zh": "📦 归档频道", "en": "📦 Archive Channel"},
+    "archive.no_permission": {
+        "zh": (
+            "⚠️ **机器人权限不足**，无法发送归档文件。\n"
+            "归档频道 <#{channel_id}> 缺少权限：{permissions}\n"
+            "请联系服务器管理员为机器人角色补齐上述权限后重试。"
+        ),
+        "en": (
+            "⚠️ **The bot lacks permission** and cannot send the archive file.\n"
+            "The archive channel <#{channel_id}> is missing: {permissions}\n"
+            "Please ask a server administrator to grant these permissions to the bot role, then try again."
+        ),
+    },
     "archive.admin_only": {
         "zh": "仅管理员可执行此操作。",
         "en": "Only administrators can perform this action.",

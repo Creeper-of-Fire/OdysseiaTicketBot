@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from utility.message import send_message
 
+from .archive_guard import COUNTER_PERMISSIONS, ensure_permissions
+
 if TYPE_CHECKING:
     import discord
 
@@ -38,20 +40,25 @@ class TicketCounterService:
     async def reserve_number(
         self,
         guild_id: int,
-        archive_channel: object,
+        archive_channel: discord.abc.GuildChannel | discord.Thread,
     ) -> ReservedTicketNumber:
         """占号：扫描归档频道取最大计数，发送新计数消息原子占号。
 
         1. 获取 guild 级锁
-        2. 扫描归档频道最近 N 条消息，找最新计数
-        3. 如果没找到 → 报错
-        4. 计算 next = max + 1
-        5. 发新计数消息到归档频道（原子占号）
+        2. 校验 BOT 对归档频道的权限（缺权限直接报错，不发 HTTP 请求）
+        3. 扫描归档频道最近 N 条消息，找最新计数
+        4. 如果没找到 → 报错
+        5. 计算 next = max + 1
+        6. 发新计数消息到归档频道（原子占号）
 
         占号后若工单创建失败，调用 release() 删除计数消息即可回滚
         （计数按历史消息取 max，删除后编号自然可复用）。
         """
         async with self._get_lock(guild_id):
+            # 权限预检：读历史 + 发消息缺任一项都会 403，先本地拦下来，
+            # 给出可操作的提示，而不是让 Forbidden 冒泡到 view 层。
+            ensure_permissions(archive_channel, COUNTER_PERMISSIONS)
+
             latest = await self._scan_for_latest(archive_channel)
             if latest is None:
                 raise RuntimeError(
