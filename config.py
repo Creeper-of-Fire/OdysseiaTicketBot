@@ -18,6 +18,14 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 # 优先从环境变量 'DISCORD_BOT_PROXY' 获取，如果环境变量不存在，则使用 None
 PROXY = os.getenv("DISCORD_BOT_PROXY", None)
 
+# --- QQ 通知通道（core/contact_maintainer_cog.py「联系维护者」用）---
+# QQ 官方机器人开放平台的凭据 + 维护者的 openid。
+# 任一项缺失时，「联系维护者」命令会明确提示"未配置"并拒绝执行（fail-loud），
+# 但**不影响 bot 启动**——缺配置只是这个功能不可用，不是致命错误。
+QQBOT_APP_ID = os.getenv("QQBot_AppID")
+QQBOT_APP_SECRET = os.getenv("QQBot_AppSecret")
+QQBOT_OWNER_OPENID = os.getenv("QQBot_OwnerOpenID")
+
 FORCE_REFRESH_COMMAND = False
 # ===================================================================
 # 模块 (Cogs) 配置
