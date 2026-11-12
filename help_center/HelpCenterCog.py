@@ -12,7 +12,15 @@ if TYPE_CHECKING:
     from main import TicketBot
 
 # 隐私政策的最后更新日期——改文案时记得同步更新这里。
-_PRIVACY_LAST_UPDATED = "2026-10"
+_PRIVACY_LAST_UPDATED = "2026-11"
+
+# 完整政策站点（GitHub Pages）。站内中英双语，英文版为默认版本。
+# 本 Embed 只是摘要——口径必须与完整政策一致，有出入时以完整政策为准，
+# 但两边要一起改，不要只改一处。
+_POLICY_URL = "https://creeper-of-fire.github.io/privacy/odysseia-ticket-bot/"
+_POLICY_URL_ZH = "https://creeper-of-fire.github.io/zh/privacy/odysseia-ticket-bot/"
+_REPO_URL = "https://github.com/Creeper-of-Fire/OdysseiaTicketBot"
+_ISSUES_URL = "https://github.com/Creeper-of-Fire/OdysseiaTicketBot/issues"
 
 
 def _build_privacy_embed(bot: "TicketBot") -> discord.Embed:
@@ -25,8 +33,8 @@ def _build_privacy_embed(bot: "TicketBot") -> discord.Embed:
     embed = discord.Embed(
         title="隐私政策",
         description=(
-            f"{bot.user.name} 尊重并保护用户隐私。本政策说明本 BOT 收集哪些数据、"
-            "如何使用、如何保存，以及你对自身数据拥有的权利。"
+            f"{bot.user.name} 尊重并保护用户隐私。以下是本政策要点的摘要；"
+            "完整政策（含数据处理细节与你的权利）见文末链接。"
         ),
         color=discord.Color.from_rgb(88, 101, 242),
     )
@@ -34,29 +42,29 @@ def _build_privacy_embed(bot: "TicketBot") -> discord.Embed:
     embed.add_field(
         name="📥 我们收集的数据",
         value="\n".join([
-            "• Discord 用户 ID 与服务器 ID——功能运转的基础标识",
-            "• 工单（投诉）数据：你提交的表单内容，以及工单频道内的消息；"
-            "工单关闭后整个频道会归档到归档频道，供管理组查阅",
-            "• 漂流瓶：你投出的标题与正文、投递与捞取记录",
-            "• 许愿墙：愿望标题与内容、支持记录",
+            "• Discord 用户 ID、服务器 ID、角色、频道与消息 ID——功能运转的基础标识",
+            "• 投诉表单：你填写的被投诉人用户名或 ID、事件描述、证据链接"
+            "（只有链接，不支持上传附件）；表单在你确认提交前只存在于内存中",
+            "• 工单频道内的消息与后续沟通",
+            "• 许愿墙：作者、标题、正文、支持与认领记录（实名展示）",
+            "• 漂流瓶：作者、打捞者、标题、正文与各阶段时间戳（实名展示）",
         ]),
         inline=False,
     )
     embed.add_field(
         name="🎯 数据的用途",
         value=(
-            "仅用于提供工单处理、漂流瓶、许愿墙等社区功能。"
-            "工单内容仅对参与处理的管理人员可见，不会公开；"
-            "漂流瓶与愿望按功能设计在服务器内展示。"
+            "仅用于提供工单处理、许愿墙与漂流瓶等社区功能。"
+            "工单内容仅对提交者本人与该投诉类型的处理组可见，不会公开在频道中；"
+            "许愿与漂流瓶按功能设计在服务器内展示。"
         ),
         inline=False,
     )
     embed.add_field(
         name="🗄️ 存储与保留",
         value=(
-            "数据保存在 BOT 维护者控制的服务器上（本地数据库与文件），"
-            "并定期自动备份到指定服务器频道，仅维护者与管理组可访问。"
-            "数据在功能需要期间保留。"
+            "数据保存在 BOT 维护者控制的服务器上（文件），并定期备份以便在误操作后"
+            "回退。投诉记录不会自动过期，保留至被删除；归档的工单长期保留。"
         ),
         inline=False,
     )
@@ -70,7 +78,21 @@ def _build_privacy_embed(bot: "TicketBot") -> discord.Embed:
     )
     embed.add_field(
         name="✅ 你的权利",
-        value="你可以随时通过私信联系 BOT 维护者，查询或删除与你相关的数据。",
+        value=(
+            f"你可以随时通过 Discord 私信维护者，或在 <{_ISSUES_URL}> 提交 Issue，"
+            "查询、更正或要求删除与你相关的数据（由维护者人工处理）。\n"
+            "如果某条投诉涉及你，处理组可能持有他人提交的关于你的信息，"
+            "你同样可以提出查询或删除。"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="📖 完整政策",
+        value=(
+            f"英文（默认）：<{_POLICY_URL}>\n"
+            f"中文：<{_POLICY_URL_ZH}>\n"
+            f"源代码公开可查：<{_REPO_URL}>"
+        ),
         inline=False,
     )
 
@@ -84,7 +106,7 @@ class HelpCenterCog(commands.Cog, name="HelpCenter"):
     """帮助中心——对外展示隐私政策等合规信息。
 
     背景：Discord 开发者政策要求收集用户数据的 BOT 提供隐私政策；
-    我们没有独立网站，用帮助组的「隐私政策」命令作为政策展示入口。
+    完整政策在独立站点（_POLICY_URL），本命令展示的是要点摘要。
     命令全员可用（不设 default_permissions），私密回复不刷屏。
     """
 
