@@ -45,9 +45,6 @@ COGS = {
     "bottle": {
         "enabled": True,
     },
-    "temp": {
-        "enabled": True,
-    },
     "complaint": {
         "enabled": True,
     },

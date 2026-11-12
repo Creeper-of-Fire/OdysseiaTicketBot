@@ -15,7 +15,6 @@ from core.embed_link.embed_manager import EmbedLinkManager
 from help_center.HelpCenterCog import HelpCenterCog
 from pray.WishSystemCog import WishSystemCog
 from bottle.BottleSystemCog import BottleSystemCog
-from temp.TempCog import TempCog
 from complaint.ComplaintCog import ComplaintCog
 
 # ===================================================================
@@ -53,7 +52,16 @@ class TicketBot(commands.Bot):
         # 设置机器人需要监听的意图 (Intents)
         intents = discord.Intents.default()
         intents.members = True
-        super().__init__(command_prefix='!', intents=intents, **kwargs)
+        super().__init__(
+            command_prefix='!',
+            intents=intents,
+            # 类脑服务器有 42 万成员。discord.py 的 chunk_guilds_at_startup 默认取
+            # intents.members（discord/state.py），开着就等于每次连接/重连都自动拉
+            # 全量成员列表，占满 event loop 40+ 秒 → 心跳发不出去 → 被 Discord 掐断。
+            # 工单 bot 不做全员遍历，成员数据改为用到时再缓存。
+            chunk_guilds_at_startup=False,
+            **kwargs,
+        )
         # 将 logger 实例正确地附加到 bot 对象上
         self.logger: logging.Logger = logger
 
@@ -138,7 +146,6 @@ class CogManager:
             "help_center": HelpCenterCog,
             "wish": WishSystemCog,
             "bottle": BottleSystemCog,
-            "temp":TempCog,
             "complaint": ComplaintCog,
         }
 
