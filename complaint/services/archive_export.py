@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import html as html_escape
 import io
@@ -558,22 +559,51 @@ async def build_archive(
 
     header_html = f"<h1>📌 {html_escape.escape(archive_title)}</h1>" + "<div class='meta'>" + html_escape.escape("\n".join(header_lines)) + "</div>"
 
+    # --- CPU 密集段的线程池封装 -------------------------------------------
+    # 归档流程原本在 event loop 主线程里跑几十秒的纯 CPU 操作（逐条消息 .format、
+    # 全文 join、base64 编码、zip 压缩）。event loop 被占满期间心跳协程排不上队，
+    # Discord 连续 60 秒收不到心跳就会发 INVALID_SESSION 掐断连接（表现为
+    # "Can't keep up" / "has stopped responding to the gateway"）。
+    # 下面几个 helper 都是纯同步 CPU 函数，必须通过 asyncio.to_thread 在工作线程执行。
+
+    def _encode_inline_assets_sync(
+        imgs: list[tuple[str, str, bytes]],
+        avs: list[tuple[str, str, bytes]],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """把图片/头像编码成 data URI（纯 CPU，只能在工作线程跑）。"""
+        image_src = {key: _safe_bytes_to_data_url(mime, data) for key, mime, data in imgs}
+        avatar_src = {key: _safe_bytes_to_data_url(mime, data) for key, mime, data in avs}
+        return image_src, avatar_src
+
+    def _render_html_sync(*, image_src: dict[str, str], avatar_src: dict[str, str]) -> str:
+        """渲染完整 HTML 文档（纯 CPU，只能在工作线程跑）。"""
+        return _build_html(
+            archive_title=archive_title,
+            header_html=header_html,
+            message_blocks=build_message_blocks(image_src=image_src, avatar_src=avatar_src),
+        )
+
+    def _build_zip_sync(html_bytes: bytes) -> bytes:
+        """打包 ZIP（纯 CPU 压缩，只能在工作线程跑）。"""
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("index.html", html_bytes)
+            for key, _, data in images:
+                z.writestr(f"assets/{key}", data)
+            for key, _, data in avatars:
+                z.writestr(f"assets/avatars/{key}", data)
+        return mem.getvalue()
+
     # 优先：单文件 HTML（base64 内嵌图片）。但 base64 会额外膨胀约 33%，
     # 如果明显超过上传限制，就跳过这一步，避免在小内存 VPS 上制造无意义峰值。
     estimated_inline_media_bytes = int(offline_bytes_used * 4 / 3) + 512 * (len(images) + len(avatars))
     if estimated_inline_media_bytes <= limit:
-        image_src_inline: dict[str, str] = {}
-        for key, mime, data in images:
-            image_src_inline[key] = _safe_bytes_to_data_url(mime, data)
+        image_src_inline, avatar_src_inline = await asyncio.to_thread(_encode_inline_assets_sync, images, avatars)
 
-        avatar_src_inline: dict[str, str] = {}
-        for key, mime, data in avatars:
-            avatar_src_inline[key] = _safe_bytes_to_data_url(mime, data)
-
-        html_inline = _build_html(
-            archive_title=archive_title,
-            header_html=header_html,
-            message_blocks=build_message_blocks(image_src=image_src_inline, avatar_src=avatar_src_inline),
+        html_inline = await asyncio.to_thread(
+            _render_html_sync,
+            image_src=image_src_inline,
+            avatar_src=avatar_src_inline,
         )
         html_inline_bytes = html_inline.encode("utf-8")
 
@@ -586,39 +616,23 @@ async def build_archive(
 
     if offline_bytes_used > limit and (images or avatars):
         warnings.append("离线资源体积超过上传限制：已跳过 ZIP 打包，仅保留 CDN/原始链接。")
-        html_urls = _build_html(
-            archive_title=archive_title,
-            header_html=header_html,
-            message_blocks=build_message_blocks(image_src={}, avatar_src={}),
-        )
+        html_urls = await asyncio.to_thread(_render_html_sync, image_src={}, avatar_src={})
         return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings, user_stats=user_stats_list)
 
     # 超限：ZIP（index.html + assets）
     image_src_assets: dict[str, str] = {key: f"assets/{key}" for key, _, _ in images}
     avatar_src_assets: dict[str, str] = {key: f"assets/avatars/{key}" for key, _, _ in avatars}
-    html_assets = _build_html(
-        archive_title=archive_title,
-        header_html=header_html,
-        message_blocks=build_message_blocks(image_src=image_src_assets, avatar_src=avatar_src_assets),
+    html_assets = await asyncio.to_thread(
+        _render_html_sync,
+        image_src=image_src_assets,
+        avatar_src=avatar_src_assets,
     )
 
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("index.html", html_assets.encode("utf-8"))
-        for key, _, data in images:
-            z.writestr(f"assets/{key}", data)
-        for key, _, data in avatars:
-            z.writestr(f"assets/avatars/{key}", data)
-
-    zip_bytes = mem.getvalue()
+    zip_bytes = await asyncio.to_thread(_build_zip_sync, html_assets.encode("utf-8"))
     if len(zip_bytes) <= limit:
         return ArchiveBuildResult(mode="zip", filename=f"archive-{channel.id}.zip", data=zip_bytes, warnings=warnings, user_stats=user_stats_list)
 
     # 仍超限：降级（不内嵌、不打包图片，仅保留 URL）
     warnings.append("归档文件过大：已降级为仅记录图片 URL（未离线保存）。")
-    html_urls = _build_html(
-        archive_title=archive_title,
-        header_html=header_html,
-        message_blocks=build_message_blocks(image_src={}, avatar_src={}),
-    )
+    html_urls = await asyncio.to_thread(_render_html_sync, image_src={}, avatar_src={})
     return ArchiveBuildResult(mode="html", filename=f"archive-{channel.id}-urls.html", data=html_urls.encode("utf-8"), warnings=warnings, user_stats=user_stats_list)

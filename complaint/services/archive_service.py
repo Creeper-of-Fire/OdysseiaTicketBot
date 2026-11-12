@@ -174,7 +174,9 @@ class ComplaintArchiveService:
             raise RuntimeError(f"归档失败: {e}")
         finally:
             result = None
-            gc.collect()
+            # gc.collect() 是同步阻塞调用，归档对象多时能卡住 event loop，
+            # 影响心跳调度 —— 挪到工作线程执行。
+            await asyncio.to_thread(gc.collect)
 
     def _build_header_lines(
         self,
