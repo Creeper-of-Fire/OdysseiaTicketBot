@@ -1,4 +1,6 @@
 
+import logging
+
 import discord
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field
@@ -7,6 +9,8 @@ from config_data import GuildWishConfig
 from pray.pray_core.models import AnyWish
 from pray.pray_core.ports import IWishRepository, IWishExternalAdapter
 from utility.base_data_manager import AsyncGuildDataManager
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncJsonWishRepository(IWishRepository):
@@ -80,5 +84,7 @@ class DiscordWishAdapter(IWishExternalAdapter):
         if user:
             try:
                 await user.send(message)
-            except discord.Forbidden:
-                pass
+            except discord.Forbidden as e:
+                # 已知情形：对方关闭了来自服务器成员的私信，DM 无法送达。
+                # 记录带异常原文的 warning；其余异常不捕获，直接上抛。
+                logger.warning("愿望通知 DM 送达失败（user_id=%s）：%r", target_user_id, e)
