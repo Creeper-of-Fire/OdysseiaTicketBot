@@ -300,12 +300,13 @@ class ComplaintCog(FeatureCog):
         channel = interaction.channel
         guild = interaction.guild
         added: list[str] = []
-        skipped: list[str] = []
+        not_found: list[int] = []
+        forbidden: list[tuple[discord.Member, discord.Forbidden]] = []
 
         for uid in parsed_ids:
             member = await try_get_member(guild, uid)
             if not member:
-                skipped.append(f"`{uid}`（未找到）")
+                not_found.append(uid)
                 continue
 
             try:
@@ -318,8 +319,27 @@ class ComplaintCog(FeatureCog):
                     reason=f"召唤用户：{member}（by {interaction.user}）",
                 )
                 added.append(member.mention)
-            except discord.Forbidden:
-                skipped.append(f"{member.mention}（权限不足）")
+            except discord.Forbidden as e:
+                # 已知错误：BOT 缺少频道权限。转译给操作者，并把异常原文记入日志。
+                # 其余异常不捕获，直接上抛，由 discord.py 默认错误处理记录完整堆栈。
+                forbidden.append((member, e))
+
+        if forbidden:
+            logger.error(
+                "召唤用户设置频道权限被拒（guild=%s channel=%s 操作者=%s）：%s",
+                guild.id,
+                channel.id,
+                interaction.user,
+                "; ".join(f"{m} (id={m.id}): {e!r}" for m, e in forbidden),
+            )
+        if not_found:
+            logger.warning(
+                "召唤用户跳过（不在本服务器，guild=%s channel=%s 操作者=%s）：%s",
+                guild.id,
+                channel.id,
+                interaction.user,
+                ", ".join(f"id={uid}" for uid in not_found),
+            )
 
         if added:
             await send_message(
@@ -331,8 +351,18 @@ class ComplaintCog(FeatureCog):
         parts: list[str] = []
         if added:
             parts.append(f"✅ 已成功召唤 {len(added)} 位用户。")
-        if skipped:
-            parts.append(f"⚠️ {len(skipped)} 位处理失败：{', '.join(skipped)}")
+        if forbidden:
+            parts.append(
+                "⚠️ 以下用户召唤失败（机器人权限不足，无法调整频道权限，请联系管理员）："
+                + "、".join(m.mention for m, _ in forbidden)
+                + "。"
+            )
+        if not_found:
+            parts.append(
+                "⚠️ 以下用户不在本服务器，未召唤："
+                + "、".join(f"`{uid}`" for uid in not_found)
+                + "。"
+            )
         if invalid:
             parts.append(f"❌ 无法解析：{', '.join(invalid)}")
 

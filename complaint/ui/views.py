@@ -492,12 +492,12 @@ class SummonSelectView(PaginatedView):
 
         channel = interaction.channel
         added = []
-        skipped_missing = []
-        skipped_forbidden = []
+        missing = []
+        forbidden = []
         for role_id in group.role_ids:
             role = interaction.guild.get_role(role_id)
             if not role:
-                skipped_missing.append(f"<@&{role_id}>")
+                missing.append(role_id)
                 continue
             try:
                 await channel.set_permissions(
@@ -509,13 +509,29 @@ class SummonSelectView(PaginatedView):
                     reason=f"召唤身份组：{group.label}",
                 )
                 added.append(role.mention)
-            except discord.Forbidden:
-                skipped_forbidden.append(role.mention)
+            except discord.Forbidden as e:
+                # 已知错误：BOT 缺少频道权限。转译给操作者，并把异常原文记入日志。
+                # 其余异常不捕获，直接上抛，由本类 on_error 记录堆栈并反馈给操作者。
+                forbidden.append((role, e))
 
-        if skipped_missing:
-            logger.warning("召唤身份组 %s 时以下角色不存在: %s", group.label, skipped_missing)
-        if skipped_forbidden:
-            logger.warning("召唤身份组 %s 时以下角色权限不足: %s", group.label, skipped_forbidden)
+        if forbidden:
+            logger.error(
+                "召唤身份组 %s 设置频道权限被拒（guild=%s channel=%s 操作者=%s）：%s",
+                group.label,
+                interaction.guild.id,
+                channel.id,
+                interaction.user,
+                "; ".join(f"{r} (id={r.id}): {e!r}" for r, e in forbidden),
+            )
+        if missing:
+            logger.warning(
+                "召唤身份组 %s 跳过（角色不存在，guild=%s channel=%s 操作者=%s）：%s",
+                group.label,
+                interaction.guild.id,
+                channel.id,
+                interaction.user,
+                ", ".join(f"id={rid}" for rid in missing),
+            )
 
         if added:
             role_names = []
@@ -532,10 +548,18 @@ class SummonSelectView(PaginatedView):
         parts = []
         if added:
             parts.append(f"已成功召唤 {len(added)} 个角色。")
-        if skipped_missing:
-            parts.append(f"{len(skipped_missing)} 个角色已不存在。")
-        if skipped_forbidden:
-            parts.append(f"{len(skipped_forbidden)} 个角色因权限不足跳过。")
+        if forbidden:
+            parts.append(
+                "以下角色召唤失败（机器人权限不足，无法调整频道权限，请联系管理员）："
+                + "、".join(r.mention for r, _ in forbidden)
+                + "。"
+            )
+        if missing:
+            parts.append(
+                "以下角色已不存在，未召唤："
+                + "、".join(f"<@&{rid}>" for rid in missing)
+                + "。"
+            )
         if not parts:
             parts.append("身份组中没有可用的角色。")
 
@@ -610,12 +634,13 @@ class SummonUserSelectView(discord.ui.View):
 
         channel = interaction.channel
         added = []
-        skipped = []
+        not_in_guild = []
+        forbidden = []
 
         for user in self._select.values:
-            member = interaction.guild.get_member(user.id)
-            if not member:
-                skipped.append(f"<@{user.id}>")
+            member = await try_get_member(interaction.guild, user.id)
+            if member is None:
+                not_in_guild.append(user)
                 continue
 
             try:
@@ -628,11 +653,27 @@ class SummonUserSelectView(discord.ui.View):
                     reason=f"召唤用户：{member}",
                 )
                 added.append(member.mention)
-            except discord.Forbidden:
-                skipped.append(member.mention)
+            except discord.Forbidden as e:
+                # 已知错误：BOT 缺少频道权限。转译给操作者，并把异常原文记入日志。
+                # 其余异常不捕获，直接上抛，由本类 on_error 记录堆栈并反馈给操作者。
+                forbidden.append((member, e))
 
-        if skipped:
-            logger.warning("召唤用户时以下用户处理失败: %s", skipped)
+        if forbidden:
+            logger.error(
+                "召唤用户设置频道权限被拒（guild=%s channel=%s 操作者=%s）：%s",
+                interaction.guild.id,
+                channel.id,
+                interaction.user,
+                "; ".join(f"{m} (id={m.id}): {e!r}" for m, e in forbidden),
+            )
+        if not_in_guild:
+            logger.warning(
+                "召唤用户跳过（不在本服务器，guild=%s channel=%s 操作者=%s）：%s",
+                interaction.guild.id,
+                channel.id,
+                interaction.user,
+                ", ".join(f"{u} (id={u.id})" for u in not_in_guild),
+            )
 
         if added:
             await send_message(
@@ -644,8 +685,18 @@ class SummonUserSelectView(discord.ui.View):
         parts = []
         if added:
             parts.append(f"已成功召唤 {len(added)} 位用户。")
-        if skipped:
-            parts.append(f"{len(skipped)} 位用户处理失败。")
+        if forbidden:
+            parts.append(
+                "以下用户召唤失败（机器人权限不足，无法调整频道权限，请联系管理员）："
+                + "、".join(f"{m.mention}" for m, _ in forbidden)
+                + "。"
+            )
+        if not_in_guild:
+            parts.append(
+                "以下用户不在本服务器，未召唤："
+                + "、".join(f"{u.mention}（{u.name}）" for u in not_in_guild)
+                + "。"
+            )
         if not parts:
             parts.append("未选择任何用户。")
 
@@ -1046,6 +1097,15 @@ class ArchiveConfirmView(discord.ui.View):
         meta = self.cog.channel_manager.get_channel_meta(interaction.guild.id, channel.id)
 
         await interaction.response.defer()
+
+        # 归档要导出全部消息并上传归档文件，耗时较长。先给操作者一条临时消息
+        # （ephemeral：只对点击者可见，不打扰频道里的其他人），让按钮的响应可见。
+        try:
+            await interaction.followup.send(
+                t(self.locale, "archive.in_progress"), ephemeral=True,
+            )
+        except Exception:
+            logger.warning("归档中提示消息发送失败 (guild=%s channel=%s)", interaction.guild.id, channel.id, exc_info=True)
 
         guild_id = interaction.guild.id
         cfg = self.cog.get_config(guild_id)

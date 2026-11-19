@@ -254,6 +254,17 @@ _TEXTS: dict[str, dict[Locale, str]] = {
         ),
     },
     "archive.confirm": {"zh": "📦 归档频道", "en": "📦 Archive Channel"},
+    "archive.in_progress": {
+        "zh": (
+            "⏳ **正在归档中，请稍等……**\n"
+            "正在导出本频道的消息并发送至归档频道，完成后会在下方更新结果。"
+        ),
+        "en": (
+            "⏳ **Archiving in progress, please wait...**\n"
+            "Exporting this channel's messages and sending them to the archive channel. "
+            "The result will be posted below when it finishes."
+        ),
+    },
     "archive.no_permission": {
         "zh": (
             "⚠️ **机器人权限不足**，无法发送归档文件。\n"
