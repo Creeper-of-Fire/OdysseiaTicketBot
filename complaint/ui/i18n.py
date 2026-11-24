@@ -101,6 +101,10 @@ _TEXTS: dict[str, dict[Locale, str]] = {
         "zh": "投诉类型不存在，请重新选择。",
         "en": "That complaint type no longer exists. Please choose again.",
     },
+    "type_select.no_permission": {
+        "zh": "⛔ 你没有权限提交此类工单。",
+        "en": "⛔ You are not allowed to submit this ticket type.",
+    },
     "type_select.cancelled": {"zh": "已取消选择。", "en": "Selection cancelled."},
 
     # ===== 二次确认 =====

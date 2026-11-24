@@ -73,6 +73,15 @@ class ComplaintTypeConfig(BaseModel):
             return self.detail_description_en.strip() or self.detail_description
         return self.detail_description
     target_role_groups: list[str] = []
+    # 提交入口可见性：只有持有这些身份组角色的成员，才能在投诉入口面板里
+    # 看到并提交此类型。留空 = 所有人可见（默认，保持既有类型的行为不变）。
+    #
+    # 与 target_role_groups 是**两个正交维度**：
+    #   - target_role_groups = 工单建好后谁能进频道处理（工单频道权限覆盖）
+    #   - submitter_role_groups = 谁能在入口发起（类型列表过滤）
+    # 不能复用 target：多数类型的处理组是管理组，复用会导致普通成员一个
+    # 投诉都提交不了。
+    submitter_role_groups: list[str] = []
     # 标注权：target_role_groups 中哪些组在工单频道获得「标注消息」权限
     # （PIN_MESSAGES，2025-08 从管理消息拆分出的独立权限）。引用 role_groups 的组 ID。
     pin_role_groups: list[str] = []
@@ -206,6 +215,15 @@ class ComplaintConfig(BaseModel):
         if type_config is None:
             return []
         return self.get_all_role_ids_for_groups(type_config.pin_role_groups)
+
+    def get_type_submitter_role_ids(self, type_config: ComplaintTypeConfig | None) -> list[int]:
+        """收集指定投诉类型的提交入口可见组（submitter_role_groups）的角色 ID。
+
+        返回空列表 = 该类型对所有人可见。
+        """
+        if type_config is None:
+            return []
+        return self.get_all_role_ids_for_groups(type_config.submitter_role_groups)
 
     def get_effective_category_id(self, type_id: str) -> int:
         """获取指定类型的有效 category_id，类型级优先，回退到 guild 级。"""

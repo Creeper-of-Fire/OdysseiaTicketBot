@@ -65,6 +65,26 @@ def _is_current_handler(interaction: discord.Interaction, cog: "ComplaintCog") -
     return not user_role_ids.isdisjoint(current_role_ids)
 
 
+def _can_submit_type(
+    config: ComplaintConfig,
+    type_config,
+    user: discord.User | discord.Member | None,
+) -> bool:
+    """检查用户能否在入口面板看到并提交该投诉类型。
+
+    规则：`submitter_role_groups` 留空 = 所有人可见（默认）；
+    非空 = 只有持有其中任一身份组角色的成员可见。
+
+    与 `_is_current_handler`（工单建好后谁能处理）是两个正交维度。
+    """
+    role_ids = set(config.get_type_submitter_role_ids(type_config))
+    if not role_ids:
+        return True
+    # 拿不到 roles（DM / 非 Member）时按无权处理——受限类型不外泄。
+    user_roles = {role.id for role in getattr(user, "roles", [])}
+    return not user_roles.isdisjoint(role_ids)
+
+
 def _can_handle_ticket(interaction: discord.Interaction, cog: "ComplaintCog") -> bool:
     """全局管理员或当前工单处理组都能动工单按钮。
 
@@ -110,7 +130,7 @@ class EntryView(discord.ui.View):
             )
             return
 
-        view = TypeSelectView(self.cog, cfg, self.locale)
+        view = TypeSelectView(self.cog, cfg, self.locale, interaction.user)
         await view.start(interaction, ephemeral=True)
 
 
@@ -119,14 +139,23 @@ class EntryView(discord.ui.View):
 class TypeSelectView(PaginatedView):
     """投诉类型选择面板，选完后需确认才弹出表单。"""
 
-    def __init__(self, cog: ComplaintCog, config: ComplaintConfig, locale: str = "zh"):
+    def __init__(
+        self,
+        cog: ComplaintCog,
+        config: ComplaintConfig,
+        locale: str = "zh",
+        user: discord.User | discord.Member | None = None,
+    ):
         super().__init__(
-            all_items_provider=lambda: config.types,
+            all_items_provider=lambda: [
+                ct for ct in config.types if _can_submit_type(config, ct, user)
+            ],
             items_per_page=25,
             timeout=120,
         )
         self.cog = cog
         self._config = config
+        self._user = user
         self.locale = normalize_locale(locale)
         self._selected_type_id: str | None = None
 
@@ -205,7 +234,9 @@ class TypeSelectView(PaginatedView):
                     color=0xFEE75C,
                 )
                 return
-        self.embed = build_type_select_embed(self._config, self.locale)
+        # 传入过滤后的类型列表——否则受限类型的名称与说明会照常出现在
+        # 面板里，等于没隐藏。
+        self.embed = build_type_select_embed(self._config, self.locale, self.all_items)
 
     async def _on_select(self, interaction: discord.Interaction):
         if self._select.values:
@@ -223,6 +254,13 @@ class TypeSelectView(PaginatedView):
         if not type_config:
             await interaction.response.send_message(
                 t(self.locale, "type_select.not_found"), ephemeral=True,
+            )
+            return
+        # 防绕过：select 的 value 完全来自客户端 payload，只在列表里过滤不够。
+        # 必须在确认时按**当前**角色重新校验（面板打开后角色可能已变）。
+        if not _can_submit_type(cfg, type_config, interaction.user):
+            await interaction.response.send_message(
+                t(self.locale, "type_select.no_permission"), ephemeral=True,
             )
             return
         modal = ComplaintFormModal(self.cog, type_config, self.locale)

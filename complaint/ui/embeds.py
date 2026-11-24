@@ -57,11 +57,20 @@ def _collect_target_group_labels(
     return labels
 
 
-def build_type_select_embed(config: ComplaintConfig, locale: str = "zh") -> discord.Embed:
-    """构建投诉类型选择面板的 Embed，列出所有可选类型及其可见处理组。"""
+def build_type_select_embed(
+    config: ComplaintConfig,
+    locale: str = "zh",
+    types: list[ComplaintTypeConfig] | None = None,
+) -> discord.Embed:
+    """构建投诉类型选择面板的 Embed，列出所有可选类型及其可见处理组。
+
+    `types` 传入按提交者权限过滤后的类型列表；留空则列出配置里的全部类型。
+    入口面板必须传过滤后的列表——否则受限类型的名称与说明会照常暴露。
+    """
+    visible_types = config.types if types is None else types
     lines = [f"{t(locale, 'type_select.intro')}\n"]
     separator = ", " if normalize_locale(locale) == "en" else "、"
-    for ct in config.types:
+    for ct in visible_types:
         group_labels = _collect_target_group_labels(config, ct, locale)
         groups_text = separator.join(group_labels) if group_labels else t(
             locale, "type_select.no_groups",
